@@ -11,10 +11,6 @@ typedef enum Boolean
     false = 0, true
 } Boolean32;
 
-static void DisPrintUsage(const char *ProgName)
-{
-    printf("Usage: %s <binary file>\n", ProgName);
-}
 
 static void DisassembleSingle(char Line[LINE_LEN], uint8_t Opcode, const char *Mnemonic)
 {
@@ -248,7 +244,7 @@ static const uint8_t *DisassembleInstruction(FILE *OutStream, Boolean32 Capitali
                 unsigned RPIndex = 0x3 & (Opcode >> 4);
                 if (0x3 == RPIndex)
                 {
-                    DisassembleSingle(Line, Opcode, "psw?");
+                    DisassembleWithOperand(Line, Opcode, "pop", "psw", 3);
                 }
                 else
                 {
@@ -274,7 +270,7 @@ static const uint8_t *DisassembleInstruction(FILE *OutStream, Boolean32 Capitali
                 unsigned RPIndex = 0x3 & (Opcode >> 4);
                 if (0x3 == RPIndex)
                 {
-                    DisassembleSingle(Line, Opcode, "psw");
+                    DisassembleWithOperand(Line, Opcode, "push", "psw", 3);
                 }
                 else
                 {
@@ -297,7 +293,7 @@ static const uint8_t *DisassembleInstruction(FILE *OutStream, Boolean32 Capitali
     if (Capitalized)
     {
         int i = 0;
-        while (i < sizeof Line && Line[i] != '\0')
+        while (i < (int)sizeof Line && Line[i] != '\0')
         {
             if (IN_RANGE('a', Line[i], 'z'))
             {
@@ -310,7 +306,7 @@ static const uint8_t *DisassembleInstruction(FILE *OutStream, Boolean32 Capitali
     return Next;
 }
 
-static void DisassembleBuffer(FILE *OutStream, Boolean32 Capitalized, const uint8_t *Buffer, size_t BufferSize)
+void DisassembleBuffer(FILE *OutStream, Boolean32 Capitalized, const uint8_t *Buffer, size_t BufferSize)
 {
     const uint8_t *Ptr = Buffer;
     unsigned i = 0;
@@ -325,6 +321,13 @@ static void DisassembleBuffer(FILE *OutStream, Boolean32 Capitalized, const uint
     }
 }
 
+
+#ifdef STANDALONE
+
+static void DisPrintUsage(const char *ProgName)
+{
+    printf("Usage: %s <binary file>\n", ProgName);
+}
 
 int main(int argc, char **argv)
 {
@@ -364,4 +367,6 @@ int main(int argc, char **argv)
     fclose(f);
     return 0;
 }
+
+#endif /* STANDALONE */
 
