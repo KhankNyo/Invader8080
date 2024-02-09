@@ -1,15 +1,10 @@
 
-#include <stdint.h>
+#include "Common.h"
 #include <string.h>
 #include <stdio.h>
 
 
 #define LINE_LEN 256
-#define IN_RANGE(Lower, n, Upper) ((Lower) <= (n) && (n) <= (Upper))
-typedef enum Boolean 
-{
-    false = 0, true
-} Boolean32;
 
 
 static void DisassembleSingle(char Line[LINE_LEN], uint8_t Opcode, const char *Mnemonic)
@@ -69,14 +64,16 @@ static void PrintUnknownInstruction(char Line[LINE_LEN], uint8_t Opcode)
     sprintf(Line, "%02x         ???", Opcode);
 }
 
-static const uint8_t *DisassembleInstruction(FILE *OutStream, Boolean32 Capitalized, const uint8_t *Start, const uint8_t *End)
+static const uint8_t *DisassembleInstructionIntoString(char Line[LINE_LEN], bool Capitalized, const uint8_t *Start, const uint8_t *End)
 {
+#define DDD(Opc) (0x7 & ((Opc) >> 3))
+#define SSS(Opc) (0x7 & (Opc))
+#define RP(Opc) (0x3 & ((Opc) >> 4))
     if (Start + 1 > End)
         return End;
 
     uint8_t Opcode = *Start++;
     const uint8_t *Next = Start;
-    char Line[LINE_LEN];
     switch (Opcode)
     {
     case 0x00: DisassembleSingle(Line, Opcode, "nop"); break;
@@ -117,7 +114,10 @@ static const uint8_t *DisassembleInstruction(FILE *OutStream, Boolean32 Capitali
 
     default:
     {
-        static const char RegisterName[] = "abcdehlm";
+        static const char RegisterName[][5] = {
+            "b", "c", "d", "e", "h", "l",
+            "(hl)", "a"
+        };
         static const char ConditionName[][4] = {
             "nz", "z", "nc", "c",
             "po", "pe", "p", "m"
@@ -130,9 +130,9 @@ static const uint8_t *DisassembleInstruction(FILE *OutStream, Boolean32 Capitali
         {
         case 1:
         {
-            char Dst = RegisterName[0x7 & (Opcode >> 3)];
-            char Src = RegisterName[0x7 & Opcode];
-            sprintf(Line, "%02x         mov   %c, %c", Opcode, Dst, Src);
+            const char *Dst = RegisterName[DDD(Opcode)];
+            const char *Src = RegisterName[SSS(Opcode)];
+            sprintf(Line, "%02x         mov   %s, %s", Opcode, Dst, Src);
         } break;
         case 0:
         {
@@ -140,7 +140,7 @@ static const uint8_t *DisassembleInstruction(FILE *OutStream, Boolean32 Capitali
             {
             case 01:
             {
-                const char *PairName = RegisterPairName[0x3 & (Opcode >> 4)];
+                const char *PairName = RegisterPairName[RP(Opcode)];
                 if (Opcode & 0x08) /* 0b00RP_1001 */
                 {
                     DisassembleWithOperand(Line, Opcode, "dad", PairName, 2);
@@ -155,7 +155,7 @@ static const uint8_t *DisassembleInstruction(FILE *OutStream, Boolean32 Capitali
                     else
                     {
                         uint16_t Imm16 = *Next++;
-                        Imm16 |= *Next++;
+                        Imm16 |= (uint16_t)*Next++ << 8;
                         sprintf(Line, "%02x %02x %02x   lxi   %s, #%04x", 
                             Opcode, Imm16 & 0xFF, Imm16 >> 8,
                             PairName, Imm16
@@ -165,7 +165,7 @@ static const uint8_t *DisassembleInstruction(FILE *OutStream, Boolean32 Capitali
             } break;
             case 02:
             {
-                const char *PairName = RegisterPairName[0x3 & (Opcode >> 4)];
+                const char *PairName = RegisterPairName[RP(Opcode)];
                 if (Opcode & 0x08) /* 0b00RP_1010 */
                 {
                     DisassembleWithOperand(Line, Opcode, "ldax", PairName, 2);
@@ -177,7 +177,7 @@ static const uint8_t *DisassembleInstruction(FILE *OutStream, Boolean32 Capitali
             } break;
             case 03:
             {
-                const char *PairName = RegisterPairName[0x3 & (Opcode >> 4)];
+                const char *PairName = RegisterPairName[RP(Opcode)];
                 if (Opcode & 0x08) /* 0b00RP_1011 */
                 {
                     DisassembleWithOperand(Line, Opcode, "dcx", PairName, 2);
@@ -189,26 +189,26 @@ static const uint8_t *DisassembleInstruction(FILE *OutStream, Boolean32 Capitali
             } break;
             case 04:
             {
-                const char *RegName = &RegisterName[0x3 & (Opcode >> 4)];
-                DisassembleWithOperand(Line, Opcode, "inr", RegName, 1);
+                const char *RegName = RegisterName[DDD(Opcode)];
+                DisassembleWithOperand(Line, Opcode, "inr", RegName, sizeof(RegisterName[0]));
             } break;
             case 05:
             {
-                const char *RegName = &RegisterName[0x3 & (Opcode >> 4)];
-                DisassembleWithOperand(Line, Opcode, "dcr", RegName, 1);
+                const char *RegName = RegisterName[DDD(Opcode)];
+                DisassembleWithOperand(Line, Opcode, "dcr", RegName, sizeof(RegisterName[0]));
             } break;
             case 06: /* 0b00DD_D110 */
             {
-                char Dst = RegisterName[0x7 & (Opcode >> 3)];
+                const char *Dst = RegisterName[DDD(Opcode)];
                 if (Next + 1 > End) 
                 {
-                    sprintf(Line, "%02x ??      mvi   %c, #??", Opcode, Dst);
+                    sprintf(Line, "%02x ??      mvi   %s, #??", Opcode, Dst);
                     Next = End;
                 }
                 else
                 {
                     uint8_t Byte = *Next++;
-                    sprintf(Line, "%02x %02x      mvi   %c, #%02x", 
+                    sprintf(Line, "%02x %02x      mvi   %s, #%02x", 
                         Opcode, Byte, 
                         Dst, Byte
                     );
@@ -221,11 +221,11 @@ static const uint8_t *DisassembleInstruction(FILE *OutStream, Boolean32 Capitali
         {
             static const char Mnemonic[][4] = {
                 "add", "adc", "sub", "sbb",
-                "ana", "ora", "xra", "cmp"
+                "ana", "xra", "ora", "cmp"
             };
             DisassembleWithOperand(Line, Opcode, 
-                Mnemonic[0x7 & (Opcode >> 3)], 
-                &RegisterName[0x7 & Opcode], 1
+                Mnemonic[DDD(Opcode)], 
+                RegisterName[SSS(Opcode)], sizeof(RegisterName[0])
             );
         } break;
         case 3:
@@ -235,13 +235,13 @@ static const uint8_t *DisassembleInstruction(FILE *OutStream, Boolean32 Capitali
             case 00: /* 0b11ccc000: Rcc */
             {
                 char Mnemonic[4] = { 0 };
-                memcpy(Mnemonic + 1, &ConditionName[0x7 & (Opcode >> 3)], 2);
+                memcpy(Mnemonic + 1, &ConditionName[DDD(Opcode)], 2);
                 Mnemonic[0] = 'r';
                 DisassembleSingle(Line, Opcode, Mnemonic);
             } break;
             case 01:
             {
-                unsigned RPIndex = 0x3 & (Opcode >> 4);
+                unsigned RPIndex = RP(Opcode);
                 if (0x3 == RPIndex)
                 {
                     DisassembleWithOperand(Line, Opcode, "pop", "psw", 3);
@@ -254,20 +254,20 @@ static const uint8_t *DisassembleInstruction(FILE *OutStream, Boolean32 Capitali
             case 02: /* 0b11ccc010: Jcc */
             {
                 char Mnemonic[4] = { 0 };
-                memcpy(Mnemonic + 1, &ConditionName[0x7 & (Opcode >> 3)], 2);
+                memcpy(Mnemonic + 1, &ConditionName[DDD(Opcode)], 2);
                 Mnemonic[0] = 'j';
                 End = DisassembleAddr(Line, Opcode, Mnemonic, Next, End);
             } break;
             case 04: /* 0b11ccc100: Ccc */
             {
                 char Mnemonic[4] = { 0 };
-                memcpy(Mnemonic + 1, &ConditionName[0x7 & (Opcode >> 3)], 2);
+                memcpy(Mnemonic + 1, &ConditionName[DDD(Opcode)], 2);
                 Mnemonic[0] = 'c';
                 End = DisassembleAddr(Line, Opcode, Mnemonic, Next, End);
             } break;
             case 05: /* 0b11RP_0101: PUSH RP; PSW */
             {
-                unsigned RPIndex = 0x3 & (Opcode >> 4);
+                unsigned RPIndex = RP(Opcode);
                 if (0x3 == RPIndex)
                 {
                     DisassembleWithOperand(Line, Opcode, "push", "psw", 3);
@@ -280,9 +280,10 @@ static const uint8_t *DisassembleInstruction(FILE *OutStream, Boolean32 Capitali
             /* case 6 is arith with immediate group */
             case 07: /* 0b11nnn111: RST n */
             {
-                char n = 0x7 & (Opcode >> 3);
-                n += '0';
-                DisassembleWithOperand(Line, Opcode, "rst", &n, 1);
+                char n = 070 & Opcode;
+                char InterruptVector[4];
+                snprintf(InterruptVector, sizeof InterruptVector, "%02x", n);
+                DisassembleWithOperand(Line, Opcode, "rst", InterruptVector, 4);
             } break;
             }
         } break;
@@ -293,7 +294,7 @@ static const uint8_t *DisassembleInstruction(FILE *OutStream, Boolean32 Capitali
     if (Capitalized)
     {
         int i = 0;
-        while (i < (int)sizeof Line && Line[i] != '\0')
+        while (i < LINE_LEN && Line[i] != '\0')
         {
             if (IN_RANGE('a', Line[i], 'z'))
             {
@@ -302,11 +303,21 @@ static const uint8_t *DisassembleInstruction(FILE *OutStream, Boolean32 Capitali
             i++;
         }
     }
+    return Next;
+#undef DDD
+#undef SSS
+#undef RP
+}
+
+static const uint8_t *DisassembleInstruction(FILE *OutStream, bool Capitalized, const uint8_t *Start, const uint8_t *End)
+{
+    char Line[LINE_LEN];
+    const uint8_t *Next = DisassembleInstructionIntoString(Line, Capitalized, Start, End);
     fprintf(OutStream, "%s", Line);
     return Next;
 }
 
-void DisassembleBuffer(FILE *OutStream, Boolean32 Capitalized, const uint8_t *Buffer, size_t BufferSize)
+void DisassembleBuffer(FILE *OutStream, bool Capitalized, const uint8_t *Buffer, size_t BufferSize)
 {
     const uint8_t *Ptr = Buffer;
     unsigned i = 0;
@@ -323,6 +334,7 @@ void DisassembleBuffer(FILE *OutStream, Boolean32 Capitalized, const uint8_t *Bu
 
 
 #ifdef STANDALONE
+#include "File.c"
 
 static void DisPrintUsage(const char *ProgName)
 {
@@ -336,37 +348,21 @@ int main(int argc, char **argv)
         DisPrintUsage(argv[0]);
         return 0;
     }
-    const char *InputFileName = argv[1];
-    FILE *f = fopen(InputFileName, "rb");
-    if (NULL == f)
+    const char *InputFile = argv[1];
+    FileInfo File = FileRead(InputFile, false);
+    if (NULL == File.Buffer)
     {
-        perror(InputFileName);
+        perror(InputFile);
         return 1;
     }
 
-    /* find file size */
-    fseek(f, 0, SEEK_END);
-    size_t FileSize = ftell(f);
-    fseek(f, 0, SEEK_SET);
+    bool CapitalizeInstructions = true;
+    DisassembleBuffer(stdout, CapitalizeInstructions, 
+        (uint8_t*)File.Buffer, File.Size
+    );
 
-    static uint8_t Buffer[0x10000] = { 0 };
-    if (FileSize > sizeof Buffer)
-    {
-        printf("File size must be less than the 8080's addressable range.\n");
-        return 1;
-    }
-    if (fread(Buffer, 1, FileSize, f) != FileSize)
-    {
-        printf("Error in reading file.\n");
-        return 1;
-    }
-
-    Boolean32 CapitalizeInstructions = true;
-    DisassembleBuffer(stdout, CapitalizeInstructions, Buffer, FileSize);
-
-    fclose(f);
+    FileCleanup(&File);
     return 0;
 }
-
 #endif /* STANDALONE */
 

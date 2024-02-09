@@ -12,17 +12,21 @@ typedef enum I8080Flags
 {
     FLAG_C =    0x0001, /* upper 8 bits: position, lower 8 bits: mask */
     FLAG_P =    0x0204,
-    FLAG_AC =   0x0430,
-    FLAG_S =    0x0640,
-    FLAG_Z =    0x0780,
+    FLAG_AC =   0x0410,
+    FLAG_Z =    0x0640,
+    FLAG_S =    0x0780,
 } I8080Flags;
 
 struct Intel8080 
 {
     union {
         struct {
-            uint8_t A, B, C, D, 
-                    E, H, L, M;
+            uint8_t B, C, 
+                    D, E, 
+                    H, L, 
+                    M,  /* NOTE: M is not a real register, it's a place holder for mode 110, 
+                           which is a memory reference through HL */
+                    A;
         };
         uint8_t R[8];
     };
