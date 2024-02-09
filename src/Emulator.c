@@ -221,18 +221,16 @@ void I8080AdvanceClock(Intel8080 *i8080)
         if (LowNibble > 9 || GET_FLAG(FLAG_AC))
         {
             LowNibble += 6; /* turn a binary carry into a decimal carry */
-            SET_FLAG(FLAG_AC, LowNibble >> 4);
         }
-        else SET_FLAG(FLAG_AC, 0);
+        SET_FLAG(FLAG_AC, LowNibble >> 4);
 
         /* adjust high nibble */
         unsigned HighNibble = (i8080->A & 0xF0) + (LowNibble & 0xF0);
         if (HighNibble > 0x90 || GET_FLAG(FLAG_C))
         {
             HighNibble += 0x60; /* turn a binary carry into a decimal carry */
-            SET_FLAG(FLAG_C, HighNibble >> 8);
         }
-        else SET_FLAG(FLAG_C, 0);
+        SET_FLAG(FLAG_C, HighNibble >> 8);
 
         /* writeback */
         i8080->A = HighNibble | (LowNibble & 0x0F);
@@ -563,7 +561,7 @@ static uint8_t CPMReadFn(Intel8080 *i8080, uint16_t Address)
         fprintf(stdout, "\nGG.\n");
         exit(0);
     }
-    else if (Address + 1 > sizeof sBuffer)
+    else if (Address + 1u > sizeof sBuffer)
     {
         printf("Warning: invalid read at %04x\n", Address);
         return 0;
@@ -573,7 +571,7 @@ static uint8_t CPMReadFn(Intel8080 *i8080, uint16_t Address)
 
 static void CPMWriteFn(Intel8080 *i8080, uint16_t Address, uint8_t Byte)
 {
-    if (Address + 1 > sizeof sBuffer)
+    if (Address + 1u > sizeof sBuffer)
     {
         printf("Warning: invalid write at %04x\n", Address);
         return;
