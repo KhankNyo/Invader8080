@@ -256,14 +256,14 @@ static const uint8_t *DisassembleInstructionIntoString(char Line[LINE_LEN], bool
                 char Mnemonic[4] = { 0 };
                 memcpy(Mnemonic + 1, &ConditionName[DDD(Opcode)], 2);
                 Mnemonic[0] = 'j';
-                End = DisassembleAddr(Line, Opcode, Mnemonic, Next, End);
+                Next = DisassembleAddr(Line, Opcode, Mnemonic, Next, End);
             } break;
             case 04: /* 0b11ccc100: Ccc */
             {
                 char Mnemonic[4] = { 0 };
                 memcpy(Mnemonic + 1, &ConditionName[DDD(Opcode)], 2);
                 Mnemonic[0] = 'c';
-                End = DisassembleAddr(Line, Opcode, Mnemonic, Next, End);
+                Next = DisassembleAddr(Line, Opcode, Mnemonic, Next, End);
             } break;
             case 05: /* 0b11RP_0101: PUSH RP; PSW */
             {

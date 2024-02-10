@@ -6,6 +6,7 @@
 #include <stdbool.h>
 
 #define IN_RANGE(Lower, n, Upper) ((Lower) <= (n) && (n) <= (Upper))
+#define NONNULL(Ptr) if (NULL == Ptr) UNREACHABLE("Null pointer")
 #define DIE() abort()
 
 #ifdef DEBUG 
@@ -15,7 +16,7 @@
     DIE();\
 } while (0)
 #else
-#  define UNREACHABLE(...) 
+#  define UNREACHABLE(...) do {} while (0)
 #endif /* DEBUG */
 
 

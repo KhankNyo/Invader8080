@@ -1,45 +1,119 @@
 
-#include "Emulator.h"
+#include "Common.h"
+
+typedef struct Intel8080 Intel8080;
+typedef void (*I8080WriteFn)(Intel8080 *i8080, uint16_t Address, uint8_t Byte);
+typedef uint8_t (*I8080ReadFn)(Intel8080 *i8080, uint16_t Address);
+struct Intel8080 
+{
+    union {
+        struct {
+            uint8_t B, C, 
+                    D, E, 
+                    H, L, 
+                    M,  /* NOTE: M is not a real register, it's a place holder for mode 110, 
+                           which is a memory reference through HL */
+                    A;
+        };
+        uint8_t R[8];
+    };
+    uint8_t Status;
+    uint8_t Clock;
+    uint16_t PC;
+    uint16_t SP;
+
+    void *UserData;
+    I8080ReadFn Read;
+    I8080WriteFn Write;
+    I8080ReadFn PortRead;   /* called by IN instruction */
+    I8080WriteFn PortWrite; /* called by OUT instruction */
+
+    uint16_t Data;
+    uint8_t Opcode;
+    uint8_t Halted;
+    uint8_t InterruptEnable;
+};
+
+
+Intel8080 I8080Init(uint16_t PC, void *UserData, 
+        I8080ReadFn ReadFn, I8080WriteFn WriteFn,
+        I8080ReadFn PortReadFn, I8080WriteFn PortWriteFn
+);
+void I8080AdvanceClock(Intel8080 *i8080);
+void I8080Interrupt(Intel8080 *i8080, unsigned InterruptNumber);
+
+
+
+
+
+/*==================================== 
+ *          IMPLEMENTATION
+ *====================================*/
+
+typedef enum I8080Flags
+{
+    FLAG_C =    0x0001, /* upper 8 bits: position, lower 8 bits: mask */
+    FLAG_P =    0x0204,
+    FLAG_AC =   0x0410,
+    FLAG_Z =    0x0640,
+    FLAG_S =    0x0780,
+} I8080Flags;
+
+
 
 #define HL_INDIRECT 06
 #define SET_FLAG(flFlag, Value)\
     i8080->Status = (i8080->Status & ~flFlag) | ((unsigned)(Value) << (flFlag >> 8))
-#define GET_FLAG(flFlag)\
+#define GET_FLAG(flFlag) \
     (((i8080)->Status & (flFlag)) >> ((flFlag) >> 8))
-#define READ_PAIR(High, Low) (((uint16_t)i8080->High << 8) | i8080->Low)
-#define WRITE_PAIR(High, Low, Dat) do {\
-    i8080->High = (Dat) >> 8; \
-    i8080->Low = (Dat) & 0xFF;\
-} while (0)
-
-#define READ_SRC(IntoVariable, SrcEncoding) do {\
-    unsigned sss_ = SrcEncoding;\
-    if (sss_ == HL_INDIRECT) {\
-        IntoVariable = i8080ReadByte(i8080, READ_PAIR(H, L));\
-    } else {\
-        IntoVariable = i8080->R[sss_];\
-    }\
-} while (0)
-#define WRITE_DST(DstEncoding, u8Data) do {\
-    unsigned ddd_ = DstEncoding;\
-    if (ddd_ == HL_INDIRECT) {\
-        i8080WriteByte(i8080, READ_PAIR(H, L), u8Data);\
-    } else {\
-        i8080->R[ddd_] = u8Data;\
-    }\
-} while (0)
-
 /* does the arith operation has carry from bit 3 to bit 4? */
-#define HAS_MIDDLE_CARRY(Ret, A, B) (1 & ( ((~(Ret)&((A) | (B))) | ((A)&(B))) >> 3))
+#define HAS_MIDDLE_CARRY(Ret, A, B) \
+    (1 & ( ((~(Ret)&((A) | (B))) | ((A)&(B))) >> 3))
+#define READ_PAIR(High, Low) \
+    (((uint16_t)i8080->High << 8) | i8080->Low)
+#define WRITE_PAIR(High, Low, Dat) do {\
+        i8080->High = (Dat) >> 8; \
+        i8080->Low = (Dat) & 0xFF;\
+    } while (0)
+#define READ_SRC(IntoVariable, SrcEncoding, Cyc, CycMem, CycReg) do {\
+        unsigned sss_ = SrcEncoding;\
+        if (sss_ == HL_INDIRECT) {\
+            IntoVariable = i8080ReadByte(i8080, READ_PAIR(H, L));\
+            Cyc = CycMem;\
+        } else {\
+            IntoVariable = i8080->R[sss_];\
+            Cyc = CycReg;\
+        }\
+    } while (0)
+#define WRITE_DST(DstEncoding, u8Data, Cyc, CycMem, CycReg) do {\
+        unsigned ddd_ = DstEncoding;\
+        if (ddd_ == HL_INDIRECT) {\
+            i8080WriteByte(i8080, READ_PAIR(H, L), u8Data);\
+            Cyc = CycMem;\
+        } else {\
+            i8080->R[ddd_] = u8Data;\
+            Cyc = CycReg;\
+        }\
+    } while (0)
 
 
-Intel8080 I8080Init(uint16_t PC, void *UserData, I8080ReadFn ReadFn, I8080WriteFn WriteFn)
+
+
+Intel8080 I8080Init(uint16_t PC, void *UserData, 
+        I8080ReadFn ReadFn, I8080WriteFn WriteFn,
+        I8080ReadFn PortReadFn, I8080WriteFn PortWriteFn)
 {
     Intel8080 i8080 = {
         .PC = PC,
         .UserData = UserData,
+
         .Read = ReadFn,
         .Write = WriteFn,
+        .PortRead = PortReadFn,
+        .PortWrite = PortWriteFn,
+
+        .InterruptEnable = true,
+        .Halted = false,
     };
     return i8080;
 }
@@ -180,6 +254,8 @@ void I8080AdvanceClock(Intel8080 *i8080)
 #define RP(Opc) (0x3 & (Opc >> 4))
 #define DDD(Opc) (0x7 & (Opc >> 3))
 #define SSS(Opc) (0x7 & (Opc))
+    if (i8080->Halted)
+        return;
     if (i8080->Clock)
     {
         i8080->Clock--;
@@ -187,32 +263,47 @@ void I8080AdvanceClock(Intel8080 *i8080)
     }
 
     uint8_t Opcode = i8080FetchOpcode(i8080);
+    unsigned CycleCount = 0;
     switch (Opcode)
     {
-    case 0x00: /* nop, do nothing */ break;
+    case 0x00: /* nop: No OPeration */
+    case 0x10:
+    case 0x20:
+    case 0x30:
+    case 0x08:
+    case 0x18:
+    case 0x28:
+    case 0x38:
+    {
+        CycleCount = 4;
+    } break;
     case 0x07: /* rlc: Rotate Left Carry */
     {
         unsigned Sign = i8080->A >> 7;
         i8080->A = (i8080->A << 1) | Sign;
         SET_FLAG(FLAG_C, Sign);
+        CycleCount = 4;
     } break;
     case 0x0F: /* rrc: Rotate Right Carry */
     {
         unsigned First = i8080->A & 1;
         i8080->A = (i8080->A >> 1) | (First << 7);
         SET_FLAG(FLAG_C, First);
+        CycleCount = 4;
     } break;
     case 0x17: /* ral: Rotate Accumulator Left */
     {
         unsigned Sign = i8080->A >> 7;
         i8080->A = (i8080->A << 1) | GET_FLAG(FLAG_C);
         SET_FLAG(FLAG_C, Sign);
+        CycleCount = 4;
     } break;
     case 0x1F: /* rar: Rotate Accumulator Right */ 
     {
         unsigned First = i8080->A & 1;
         i8080->A = (i8080->A >> 1) | (GET_FLAG(FLAG_C) << 7);
         SET_FLAG(FLAG_C, First);
+        CycleCount = 4;
     } break;
     case 0x27: /* daa: Decimal Adjust Accumulator */ 
     {
@@ -237,36 +328,46 @@ void I8080AdvanceClock(Intel8080 *i8080)
         SET_FLAG(FLAG_S, i8080->A >> 7);
         SET_FLAG(FLAG_Z, i8080->A == 0);
         SET_FLAG(FLAG_P, BitCount32(i8080->A) % 2 == 0);
+
+        CycleCount = 4;
     } break;
     case 0x2F: /* cma: CoMpliment Accumulator */ 
     {
         i8080->A = ~i8080->A;
+        CycleCount = 4;
     } break;
     case 0x3F: /* cmc: CoMpliment Carry */ 
     {
         SET_FLAG(FLAG_C, !GET_FLAG(FLAG_C));
+        CycleCount = 4;
     } break;
     case 0x37: /* stc: SeT flag C */ 
     { 
         SET_FLAG(FLAG_C, 1);
+        CycleCount = 4;
     } break;
     case 0x76: /* hlt: Halt */
     {
-        UNREACHABLE("TODO: hlt");
+        i8080->Halted = true;
+        CycleCount = 7;
     } break;
     case 0xC9: /* ret: Return */
+    case 0xD9:
     {
         i8080->PC = i8080Pop(i8080);
+        CycleCount = 10;
     } break;
     case 0xE3: /* xthl: eXchange sTack with HL */
     {
         uint16_t Tmp = i8080ReadWord(i8080, i8080->SP);
         i8080WriteWord(i8080, i8080->SP, READ_PAIR(H, L));
         WRITE_PAIR(H, L, Tmp);
+        CycleCount = 18;
     } break;
     case 0xE9: /* pchl: PC = HL */
     {
         i8080->PC = READ_PAIR(H, L);
+        CycleCount = 5;
     } break;
     case 0xEB: /* xchg: swap(HL, DE) */
     {
@@ -277,60 +378,76 @@ void I8080AdvanceClock(Intel8080 *i8080)
         uint16_t Tmp = *DE;
         *DE = *HL;
         *HL = Tmp;
+        CycleCount = 5;
     } break;
     case 0xF9: /* sphl: SP = HL */
     { 
         i8080->SP = READ_PAIR(H, L);
+        CycleCount = 5;
     } break;
     case 0xF3: /* di: Disable Interrupt */
     {
-        UNREACHABLE("TODO: di");
+        i8080->InterruptEnable = false;
+        CycleCount = 4;
     } break;
     case 0xFB: /* ei: Enable Interrupt */
     {
-        UNREACHABLE("TODO: ei");
+        i8080->InterruptEnable = true;
+        CycleCount = 4;
     } break;
 
     case 0xDB: /* in: load A from port */
     {
-        uint8_t PortAddress = i8080FetchByte(i8080);
-        i8080->A = i8080ReadByte(i8080, PortAddress);
+        uint8_t PortNumber = i8080FetchByte(i8080);
+        i8080->A = i8080->PortRead(i8080, PortNumber);
+        CycleCount = 10;
     } break;
     case 0xD3: /* out: store A to port */
     {
-        uint8_t PortAddress = i8080FetchByte(i8080);
-        i8080WriteByte(i8080, PortAddress, i8080->A);
+        uint8_t PortNumber = i8080FetchByte(i8080);
+        i8080->PortWrite(i8080, PortNumber, i8080->A);
+        CycleCount = 10;
     } break;
 
     case 0x22: /* shld: Store HL to memory */ 
     {
         uint16_t Address = i8080FetchWord(i8080);
         i8080WriteWord(i8080, Address, READ_PAIR(H, L));
+        CycleCount = 16;
     } break;
     case 0x2A: /* lhld: Load HL to memory*/
     {
         uint16_t Address = i8080FetchWord(i8080);
         uint16_t Data = i8080ReadWord(i8080, Address);
         WRITE_PAIR(H, L, Data);
+        CycleCount = 16;
     } break;
     case 0x32: /* sta: STore Accumulator to memory */
     {
         uint16_t Address = i8080FetchWord(i8080);
         i8080WriteByte(i8080, Address, i8080->A);
+        CycleCount = 13;
     } break;
     case 0x3A: /* lda: LoaD Accumulator from memory */
     {
         uint16_t Address = i8080FetchWord(i8080);
         i8080->A = i8080ReadByte(i8080, Address);
+        CycleCount = 13;
     } break;
     case 0xC3: /* jmp: PC = Addr */
+    case 0xCB:
     {
         i8080->PC = i8080FetchWord(i8080);
+        CycleCount = 10;
     } break;
     case 0xCD: /* call: push pc; pc = addr */
+    case 0xDD:
+    case 0xED:
+    case 0xFD:
     {
         i8080Push(i8080, i8080->PC + 2);
         i8080->PC = i8080FetchWord(i8080);
+        CycleCount = 17;
     } break;
 
     default:
@@ -343,8 +460,12 @@ void I8080AdvanceClock(Intel8080 *i8080)
              * this will be a halt instruction, 
              * which is already handled and is unreachable in here */
             uint8_t Byte;
-            READ_SRC(Byte, SSS(Opcode));
-            WRITE_DST(DDD(Opcode), Byte);
+            READ_SRC(Byte, SSS(Opcode), 
+                CycleCount, 7, 4
+            );
+            WRITE_DST(DDD(Opcode), Byte,
+                CycleCount, 7, 4
+            );
         } break;
         case 0:
         {
@@ -365,6 +486,7 @@ void I8080AdvanceClock(Intel8080 *i8080)
                     uint16_t ImmediateWord = i8080FetchWord(i8080);
                     i8080WriteRegPair(i8080, RegPairIndex, ImmediateWord);
                 }
+                CycleCount = 10;
             } break;
             case 02: /* ldax, stax */
             {
@@ -378,6 +500,7 @@ void I8080AdvanceClock(Intel8080 *i8080)
                 {
                     i8080WriteByte(i8080, Address, i8080->A);
                 }
+                CycleCount = 7;
             } break;
             case 03: /* inx, dcx: INcrement and DeCrement register pair */
             {
@@ -386,6 +509,7 @@ void I8080AdvanceClock(Intel8080 *i8080)
                 int i = (Opcode & 0x08)? 
                     -1 : 1;
                 i8080WriteRegPair(i8080, RegPairIndex, Data + i);
+                CycleCount = 5;
             } break;
             case 04: /* inr: INcRement */
             case 05: /* dcr: DeCRement */
@@ -399,13 +523,16 @@ void I8080AdvanceClock(Intel8080 *i8080)
                     Data = i8080ReadByte(i8080, Address);
                     Result = Data + i;
                     i8080WriteByte(i8080, Address, Result);
+                    CycleCount = 10;
                 }
                 else
                 {
                     Data = i8080->R[DDD(Opcode)];
                     Result = Data + i;
                     i8080->R[DDD(Opcode)] = Result;
+                    CycleCount = 5;
                 }
+
                 SET_FLAG(FLAG_Z, (Result & 0xFF) == 0);
                 SET_FLAG(FLAG_S, 1 & (Result >> 7));
                 SET_FLAG(FLAG_P, BitCount32(Result & 0xFF) % 2 == 0);
@@ -414,26 +541,32 @@ void I8080AdvanceClock(Intel8080 *i8080)
             case 06: /* mvi: MoVe Immediate */
             {
                 uint8_t Byte = i8080FetchByte(i8080);
-                WRITE_DST(DDD(Opcode), Byte);
+                WRITE_DST(DDD(Opcode), Byte, 
+                    CycleCount, 10, 7
+                );
             } break;
             }
         } break;
         case 2: /* 0b10mmmsss; m: mnemonic, s: source */
         {
             uint8_t Byte;
-            READ_SRC(Byte, SSS(Opcode));
+            READ_SRC(Byte, SSS(Opcode), 
+                CycleCount, 7, 4
+            );
             i8080ArithOp(i8080, DDD(Opcode), i8080->A, Byte);
         } break;
         case 3:
         {
-            switch (0x7 & Opcode)
+            switch (SSS(Opcode))
             {
             case 00: /* 0b11ccc000: Rcc: Conditional Return */
             {
                 if (i8080ConditionIsTrue(i8080, DDD(Opcode)))
                 {
                     i8080->PC = i8080Pop(i8080);
+                    CycleCount = 11;
                 }
+                CycleCount = 5;
             } break;
             case 01: /* 0b11rp0001: Pop */
             {
@@ -449,6 +582,7 @@ void I8080AdvanceClock(Intel8080 *i8080)
                     uint16_t Data = i8080Pop(i8080);
                     i8080WriteRegPair(i8080, RegPairIndex, Data);
                 }
+                CycleCount = 10;
             } break;
             case 02: /* 0b11ccc010: Jcc */
             {
@@ -457,6 +591,7 @@ void I8080AdvanceClock(Intel8080 *i8080)
                 {
                     i8080->PC = Address;
                 }
+                CycleCount = 10;
             } break;
             case 04: /* 0b11ccc100: Ccc */
             {
@@ -465,6 +600,11 @@ void I8080AdvanceClock(Intel8080 *i8080)
                 {
                     i8080Push(i8080, i8080->PC);
                     i8080->PC = Address;
+                    CycleCount = 17;
+                }
+                else
+                {
+                    CycleCount = 11;
                 }
             } break;
             case 05: /* 0b11RP_0101: PUSH RP; PSW */
@@ -482,27 +622,46 @@ void I8080AdvanceClock(Intel8080 *i8080)
                     uint16_t Data = i8080ReadRegPair(i8080, RegPairIndex);
                     i8080Push(i8080, Data);
                 }
+                CycleCount = 11;
             } break;
             case 06: /* 0b11ccc110: c: opcode for arith op */
             {
                 uint8_t Byte = i8080FetchByte(i8080);
                 i8080ArithOp(i8080, DDD(Opcode), i8080->A, Byte);
+                CycleCount = 7;
             } break;
             case 07: /* 0b11nnn111: RST n */
             {
                 uint8_t InterruptVector = Opcode & 070;
                 i8080Push(i8080, i8080->PC);
                 i8080->PC = InterruptVector;
+                CycleCount = 11;
             } break;
             }
         } break;
         }
     } break;
     }
+    i8080->Clock = CycleCount;
 
 #undef SSS
 #undef DDD
 #undef RP
+}
+
+void I8080Interrupt(Intel8080 *i8080, unsigned InterruptNumber)
+{
+    if (!i8080->InterruptEnable)
+        return;
+
+    i8080->Halted = false;
+    i8080->InterruptEnable = false;
+
+    /* rst instruction */
+    i8080Push(i8080, i8080->PC);
+    uint16_t Vector = (InterruptNumber & 0x7)*8;
+    i8080->PC = Vector;
+    i8080->Clock = 11;
 }
 
 #undef HL_INDIRECT
@@ -518,11 +677,11 @@ void I8080AdvanceClock(Intel8080 *i8080)
 
 
 #ifdef STANDALONE
-
-#include <stdio.h>
 #undef STANDALONE
 #include "Disassembler.c"
 #include "File.c"
+
+#include <stdio.h>
 
 static void EmuPrintUsage(const char *ProgramName)
 {
@@ -539,7 +698,7 @@ static uint8_t CPMReadFn(Intel8080 *i8080, uint16_t Address)
     {
         switch (i8080->C)
         {
-        case 9:
+        case 9: /* string output in DE */
         {
             uint16_t Index = ((uint16_t)i8080->D << 8) | i8080->E;
             const char *String = (const char *)&sBuffer[Index];
@@ -550,7 +709,7 @@ static uint8_t CPMReadFn(Intel8080 *i8080, uint16_t Address)
                 i++;
             }
         } break;
-        case 2:
+        case 2: /* char output in E */
         {
             fputc(i8080->E, stdout);
         } break;
@@ -558,7 +717,7 @@ static uint8_t CPMReadFn(Intel8080 *i8080, uint16_t Address)
     } 
     else if (0x0000 == Address)
     {
-        fprintf(stdout, "\nGG.\n");
+        /* warm boot, that means we passed all tst8080 tests */
         exit(0);
     }
     else if (Address + 1u > sizeof sBuffer)
@@ -590,17 +749,10 @@ static char GetInput(void)
 static void DumpStatus(const Intel8080 *i8080)
 {
     char Line[LINE_LEN];
-    if (i8080->PC < sizeof sBuffer)
-    {
-        const uint8_t *CurrentInstruction = &sBuffer[i8080->PC];
-        DisassembleInstructionIntoString(Line, true, 
-            CurrentInstruction, CurrentInstruction + 3
-        );
-    }
-    else 
-    {
-        sprintf(Line, "(location out of bound)");
-    }
+    const uint8_t *CurrentInstruction = &sBuffer[i8080->PC];
+    DisassembleInstructionIntoString(Line, true, 
+        CurrentInstruction, CurrentInstruction + 3
+    );
 
     char Flag[16] = "sz_a_p_c";
     for (int i = 0; i < 8; i++)
@@ -654,9 +806,12 @@ int main(int argc, char **argv)
 
     sBuffer[0x0005] = 0xC9; /* return instruction for string output addr */
     Intel8080 i8080 = I8080Init(
-        0x100, NULL, CPMReadFn, CPMWriteFn
+        0x100, NULL, 
+        CPMReadFn, CPMWriteFn,
+        CPMReadFn, CPMWriteFn
     );
 #if 0
+    /* single step */
     int ShouldQuit = 0;
     while (!ShouldQuit)
     {
@@ -668,6 +823,7 @@ int main(int argc, char **argv)
         I8080AdvanceClock(&i8080);
     }
 #else
+    /* run until warm boot */
     while (1)
     {
         I8080AdvanceClock(&i8080);
