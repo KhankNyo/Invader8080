@@ -16,9 +16,9 @@ if "%1"=="clean" (
 
     %CC% -DSTANDALONE -o bin\Disassembler.exe src\Disassembler.c
     %CC% -DSTANDALONE -o bin\8080.exe src\8080.c
-    %CC% -DPLATFORM_WIN32 -municode -Wl,-subsystem=windows ^
+    %CC% -DPLATFORM_WIN32 -municode ^
         -o bin\Win32.exe ^
         src\Win32.c ^
         resources\Resources.c ^
-        -lgdi32
+        -lgdi32 -lwinmm
 )

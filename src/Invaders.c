@@ -9,6 +9,8 @@
 #include "8080.c"
 
 
+
+
 typedef enum InvaderReadPort
 {
     R_INP0 = 0,       
@@ -39,10 +41,18 @@ typedef struct PortHardware
             Player2;
 } PortHardware;
 
+typedef struct SoundData 
+{
+    const void *Ptr;
+    uint32_t Size;
+} SoundData;
+
 static PortHardware sHardware = { 0 };
 static Intel8080 sI8080 = { 0 };
 static uint8_t sRam[0x2400 - 0x2000];
 static uint8_t sVideoMemory[0x4000 - 0x2400];
+
+static SoundData sUFOSoundData;
 
 
 
@@ -86,6 +96,7 @@ static void MemWriteByte(Intel8080 *i8080, uint16_t Address, uint8_t Byte)
 
 static uint8_t PortReadByte(Intel8080 *i8080, uint16_t Port)
 {
+    (void)i8080;
     uint8_t Byte = 0;
     switch ((InvaderReadPort)Port)
     {
@@ -97,19 +108,55 @@ static uint8_t PortReadByte(Intel8080 *i8080, uint16_t Port)
     return Byte;
 }
 
+#include <stdio.h>
+
 static void PortWriteByte(Intel8080 *i8080, uint16_t Port, uint8_t Byte)
 {
+#define ON_EDGE(Curr, Prev, Bit) ((Curr & (1 << Bit)) && 0 == (Prev & (1 << Bit)))
+    (void)i8080;
     switch (Port)
     {
     case W_SOUND1: 
     {
+        static uint8_t Last = 0;
+        if (ON_EDGE(Byte, Last, 0))
+        {
+        }
+        if (ON_EDGE(Byte, Last, 1))
+        {
+        }
+        if (ON_EDGE(Byte, Last, 2))
+        {
+        }
+        if (ON_EDGE(Byte, Last, 3))
+        {
+        }
+        Last = Byte;
     } break;
     case W_SOUND2: 
     {
+        static uint8_t Last = 0;
+        if (ON_EDGE(Byte, Last, 4))
+        {
+        }
+        if (ON_EDGE(Byte, Last, 5))
+        {
+        }
+        if (ON_EDGE(Byte, Last, 6))
+        {
+        }
+        if (ON_EDGE(Byte, Last, 7))
+        {
+        }
+        if (ON_EDGE(Byte, Last, 8))
+        {
+        }
+        Last = Byte;
     } break;
     case W_SHIFTAMNT:   sHardware.SR.ShiftAmount = Byte & 0x7; break;
     case W_SHIFT_DATA:  sHardware.SR.Data = ((uint16_t)Byte << 8) | (sHardware.SR.Data >> 8); break;
     }
+#undef ON_EDGE
 }
 
 
@@ -155,9 +202,19 @@ void Invader_OnKeyDown(PlatformKey Key)
 }
 
 
-static double sStartTime;
+static uint32_t LEByteArrayToU32(const uint8_t *Ptr)
+{
+    return Ptr[0] 
+         | (uint32_t)Ptr[1] << 8
+         | (uint32_t)Ptr[2] << 16
+         | (uint32_t)Ptr[3] << 24;
+}
+
+
 void Invader_Setup(void)
 {
+    sUFOSoundData.Ptr = gUFOSound + 44;
+    sUFOSoundData.Size = LEByteArrayToU32(gUFOSound + 40);
     if (gSpaceInvadersRomSize != 0x2000)
     {
         Platform_PrintError("Corrupted rom (size != 8192).");
@@ -204,6 +261,7 @@ void Invader_Loop(void)
         I8080Interrupt(&sI8080, 2);
 
         Cycles = 0;
+        static double sStartTime = 0;
         double ElapsedTime = Platform_GetTimeMillisec() - sStartTime;
         if (ElapsedTime < 1000.0 / 60.0)
         {
