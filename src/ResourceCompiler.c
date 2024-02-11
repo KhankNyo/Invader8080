@@ -60,13 +60,13 @@ int main(int argc, char **argv)
         {
             fprintf(OutputSource, "\n    ");
         }
-        fprintf(OutputSource, "0x%02x, ", (unsigned)InputFile.Buffer[i]);
+        fprintf(OutputSource, "0x%02x, ", ((unsigned)InputFile.Buffer[i]) & 0xFF);
     }
     fprintf(OutputSource, 
             "\n"
             "};\n"
     );
-    fprintf(OutputSource, "const unsigned long %sSize = sizeof %s;",
+    fprintf(OutputSource, "const unsigned long %sSize = sizeof %s;\n",
         ResourceIdentifier, ResourceIdentifier
     );
 
