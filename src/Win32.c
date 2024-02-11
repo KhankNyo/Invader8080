@@ -10,7 +10,7 @@
 
 static uint8_t sBackBuffer[256*224 * 4];
 static HWND sMainWindow;
-static LPDIRECTSOUNDBUFFER sSecondaryBuffer;
+static LPDIRECTSOUNDBUFFER sSecondarySoundBuffer;
 
 #define WIN32_FN_DIRECT_SOUND_CREATE(name)\
     HRESULT WINAPI name(LPGUID lpGuid, LPDIRECTSOUND* ppDS, LPUNKNOWN  pUnkOuter)
@@ -68,7 +68,7 @@ static BOOL Win32_PollInputs(void)
 }
 
 
-static int Win32_InitDirectSound(HWND Window, uint32_t bufsize, uint32_t SamplePerSec)
+static int Win32_InitDirectSound(HWND Window, uint32_t SamplePerSec, uint32_t BufferSize)
 {
     /* load DirectSound lib */
     HMODULE LibDSound = LoadLibraryA("dsound.dll");
@@ -139,10 +139,10 @@ static int Win32_InitDirectSound(HWND Window, uint32_t bufsize, uint32_t SampleP
     BufferDescription = (DSBUFFERDESC) {
         .dwSize = sizeof BufferDescription,
         /* fuck me */
-        .dwBufferBytes = bufsize, 
+        .dwBufferBytes = BufferSize, 
         .lpwfxFormat = &WaveFormat,
     };
-    if (FAILED(METHOD_CALL(DSound, CreateSoundBuffer)(DSound, &BufferDescription, &sSecondaryBuffer, 0)))
+    if (FAILED(METHOD_CALL(DSound, CreateSoundBuffer)(DSound, &BufferDescription, &sSecondarySoundBuffer, 0)))
     {
         /* TODO: logging */
         return 0;
@@ -193,14 +193,94 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWCHAR CmdLine, 
      * UpdateWindow(sMainWindow);
      * */
 
-    if (!Win32_InitDirectSound(sMainWindow, 48000, 48000 * (sizeof(uint16_t)*2)))
+    size_t SamplesPerSec = 48000;
+    size_t SampleSize = sizeof(uint16_t)*2;
+    size_t SoundBufferSize = SamplesPerSec*SampleSize;
+    int16_t SoundVolume = 1000;
+    uint32_t Hz = 440;
+    uint32_t SampleDuration = SamplesPerSec / Hz;
+    uint32_t SampleIndex = 0;
+    Bool8 HasSound = false;
+    if (!Win32_InitDirectSound(sMainWindow, SamplesPerSec, SoundBufferSize))
     {
+        Platform_PrintError("Unable to initalize DirectSound.");
+    }
+    else
+    {
+        METHOD_CALL(sSecondarySoundBuffer, Play)(sSecondarySoundBuffer, 0, 0, DSBPLAY_LOOPING);
+        HasSound = true;
     }
 
     Invader_Setup();
     while (Win32_PollInputs())
     {
         Invader_Loop();
+        if (!HasSound)
+        {
+            continue;
+        }
+
+        /* get the play and write cursor */
+        DWORD PlayCursor, 
+              WriteCursor;
+        METHOD_CALL(sSecondarySoundBuffer, GetCurrentPosition)(sSecondarySoundBuffer, &PlayCursor, &WriteCursor);
+        DWORD BytesToLock = SampleIndex * SampleSize % SoundBufferSize;
+        DWORD WriteSize = SoundBufferSize;
+        if (WriteCursor > PlayCursor) /* write cursor is ahead */
+        {
+            WriteSize = SoundBufferSize - BytesToLock;
+            WriteSize += PlayCursor;
+        }
+        else if (WriteCursor < PlayCursor) /* write cursor is behind */
+        {
+            WriteSize = PlayCursor - BytesToLock;
+        }
+
+        /* get the regions inside the sound buffer available for writing */
+        DWORD FirstRegionSize,
+              SecondRegionSize;
+        LPVOID FirstRegion,
+               SecondRegion;
+        if (SUCCEEDED(METHOD_CALL(sSecondarySoundBuffer, 
+            Lock)(sSecondarySoundBuffer, 
+                BytesToLock, WriteSize, 
+                &FirstRegion, &FirstRegionSize, 
+                &SecondRegion, &SecondRegionSize, 
+                0
+            )))
+        {
+            int16_t *SampleOut = FirstRegion;
+            for (DWORD i = 0; i < FirstRegionSize/SampleSize; i++)
+            {
+                int16_t SoundData = (SampleIndex / SampleDuration/2) % 2
+                    ? SoundVolume : -SoundVolume;
+                SampleIndex++;
+
+                /* left */
+                /* right */
+                *SampleOut++ = SoundData;
+                *SampleOut++ = SoundData;
+            }
+
+            SampleOut = SecondRegion;
+            for (DWORD i = 0; i < SecondRegionSize/SampleSize; i++)
+            {
+                int16_t SoundData = (SampleIndex / SampleDuration/2) % 2
+                    ? SoundVolume : -SoundVolume;
+                SampleIndex++;
+
+                /* left */
+                /* right */
+                *SampleOut++ = SoundData;
+                *SampleOut++ = SoundData;
+            }
+
+            METHOD_CALL(sSecondarySoundBuffer, 
+                Unlock)(sSecondarySoundBuffer, 
+                    FirstRegion, FirstRegionSize,
+                    SecondRegion, SecondRegionSize
+            );
+        }
     }
     /* dont't need to cleanup the windows, Windows does it for us */
     ExitProcess(0);

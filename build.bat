@@ -2,7 +2,7 @@
 
 
 set "INCARG=-I.\src\Include\ -I.\resources\"
-set "CC=tcc -Oz -Wall -Wpedantic -Wextra %INCARG%"
+set "CC=gcc -Oz -Wall -Wpedantic -Wextra %INCARG%"
 
 if "%1"=="clean" (
     if exist bin rmdir /q /s bin
