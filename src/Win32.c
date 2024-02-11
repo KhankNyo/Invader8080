@@ -59,6 +59,7 @@ static BOOL Win32_PollInputs(void)
 
 int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWCHAR CmdLine, int CmdShow)
 {
+    (void)PrevInstance, (void)CmdLine, (void)CmdShow;
     WNDCLASSEXW WindowClass = {
         .style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC,
         .cbSize = sizeof WindowClass,
@@ -66,7 +67,7 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWCHAR CmdLine, 
         .lpfnWndProc = Win32_WndProc,
         .lpszClassName = L"Invader", 
         .hCursor = LoadCursorW(Instance, IDC_ARROW),
-        .hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1),
+        .hbrBackground = (HBRUSH)(COLOR_BACKGROUND + 1),
     };
     RegisterClassExW(&WindowClass);
 
@@ -99,9 +100,8 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWCHAR CmdLine, 
     {
         Invader_Loop();
     }
-
     /* dont't need to cleanup, Windows does it for us */
-    return 0;
+    ExitProcess(0);
 }
 
 
@@ -119,6 +119,7 @@ void *Platform_GetBackBuffer(void)
 
 void Platform_SwapBuffer(void)
 {
+    /* force Windows to redraw the window */
     InvalidateRect(sMainWindow, NULL, FALSE);
 
     PAINTSTRUCT PaintStruct;
@@ -175,39 +176,4 @@ void Platform_PrintError(const char *ErrorMessage)
 {
     MessageBoxA(NULL, ErrorMessage, "Error", MB_ICONERROR);
 }
-
-void Platform_PrintPlatformError(void)
-{
-    UNREACHABLE("TODO: print platform error");
-}
-
-
-
-PlatformFile Platform_OpenFile(const char *FileName, PlatformFilePermission Perm)
-{
-    PlatformFile File = CreateFileA(FileName, 
-        Perm, FILE_SHARE_READ, NULL, 
-        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL
-    );
-    return File;
-}
-
-size_t Platform_ReadFile(PlatformFile File, void *Buffer, size_t BufferSize)
-{
-    DWORD Read;
-    if (!ReadFile(File, Buffer, BufferSize, &Read, NULL))
-        return 0;
-    return Read;
-}
-
-Bool8 Platform_InvalidFile(PlatformFile File)
-{
-    return INVALID_HANDLE_VALUE == File;
-}
-
-void Platform_CloseFile(PlatformFile File)
-{
-    CloseHandle(File);
-}
-
 

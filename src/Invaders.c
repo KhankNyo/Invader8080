@@ -4,8 +4,8 @@
 #  error "Invaders.c cannot be compiled as a standalone file, it should be included in the platform files."
 #endif /* STANDALONE */
 
+#include "SpaceInvadersRom.h"
 #include "Platform.h"
-#include "Disassembler.c"
 #include "8080.c"
 
 
@@ -41,7 +41,6 @@ typedef struct PortHardware
 
 static PortHardware sHardware = { 0 };
 static Intel8080 sI8080 = { 0 };
-static uint8_t sRom[0x2000];
 static uint8_t sRam[0x2400 - 0x2000];
 static uint8_t sVideoMemory[0x4000 - 0x2400];
 
@@ -53,7 +52,7 @@ static uint8_t MemReadByte(Intel8080 *i8080, uint16_t Address)
     Address %= 0x4000;
     if (Address < 0x1FFF)
     {
-        return sRom[Address];
+        return gSpaceInvadersRom[Address];
     }
     if (IN_RANGE(0x2000, Address, 0x23FF))
     {
@@ -72,7 +71,7 @@ static void MemWriteByte(Intel8080 *i8080, uint16_t Address, uint8_t Byte)
     Address %= 0x4000;
     if (Address < 0x1FFF)
     {
-        sRom[Address] = Byte;
+        /* writes to rom are ignored */
     }
     else if (IN_RANGE(0x2000, Address, 0x23FF))
     {
@@ -155,21 +154,11 @@ void Invader_OnKeyDown(PlatformKey Key)
 static double sStartTime;
 void Invader_Setup(void)
 {
-    PlatformFile File = Platform_OpenFile("bin/space-invaders.rom", FILEPERM_READ);
-    if (Platform_InvalidFile(File))
+    if (gSpaceInvadersRomSize != 0x2000)
     {
-        Platform_PrintError("invaders.bin must be in the current directory.");
+        Platform_PrintError("Corrupted rom.");
         Platform_Exit(1);
     }
-    if (Platform_ReadFile(File, sRom, sizeof sRom) != sizeof sRom)
-    {
-        Platform_CloseFile(File);
-        Platform_PrintPlatformError();
-        Platform_Exit(1);
-    }
-    Platform_CloseFile(File);
-
-
     sI8080 = I8080Init(0, NULL, 
         MemReadByte, MemWriteByte, 
         PortReadByte, PortWriteByte

@@ -19,11 +19,6 @@ typedef enum PlatformKey
     KEY_T = 'T',
 } PlatformKey;
 
-typedef HANDLE PlatformFile;
-typedef ULONGLONG PlatformFilePermission;
-#define FILEPERM_READ GENERIC_READ
-#define FILEPERM_WRITE GENERIC_WRITE
-
 
 #endif /* INVADER_WIN32_H */
 
