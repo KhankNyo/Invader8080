@@ -7,43 +7,20 @@
 
 static void PrintUsage(const char *ProgramName)
 {
-    printf("Usage: %s "
-            "<binary input file> <resource identifier> "
-            "<output source file> <output header file>\n", 
+    printf("Usage: %s <output source file> <output header file>\n", 
         ProgramName
     );
 }
 
-int main(int argc, char **argv)
+static bool CompileResource(
+    const char *InputFileName, const char *ResourceIdentifier, 
+    FILE *OutputSource, FILE *OutputHeader)
 {
-    if (argc != 5)
-    {
-        PrintUsage(argv[0]);
-        return 0;
-    }
-    const char *InputFileName = argv[1];
-    const char *ResourceIdentifier = argv[2];
-    const char *OutputSourceName = argv[3];
-    const char *OutputHeaderName = argv[4];
-
-
     FileInfo InputFile = FileRead(InputFileName, false);
     if (NULL == InputFile.Buffer)
     {
         perror(InputFileName);
-        return 1;
-    }
-    FILE *OutputSource = fopen(OutputSourceName, "wb");
-    if (NULL == OutputSource)
-    {
-        fprintf(stderr, "Cannot open %s for writing.\n", OutputSourceName);
-        return 1;
-    }
-    FILE *OutputHeader = fopen(OutputHeaderName, "wb");
-    if (NULL == OutputHeader)
-    {
-        fprintf(stderr, "Cannot open %s for writing.\n", OutputHeaderName);
-        return 1;
+        return false;
     }
 
 
@@ -70,17 +47,83 @@ int main(int argc, char **argv)
         ResourceIdentifier, ResourceIdentifier
     );
 
+
     /* header */
-    fprintf(OutputHeader, "#ifndef %s_HEADER_GUARD_H\n", ResourceIdentifier);
-    fprintf(OutputHeader, "#define %s_HEADER_GUARD_H\n", ResourceIdentifier);
     fprintf(OutputHeader, "extern const unsigned char %s[];\n", ResourceIdentifier);
     fprintf(OutputHeader, "extern const unsigned long %sSize;\n", ResourceIdentifier);
-    fprintf(OutputHeader, "#endif /* %s_HEADER_GUARD_H */\n", ResourceIdentifier);
-
 
     FileCleanup(&InputFile);
-    fclose(OutputSource);
-    fclose(OutputHeader);
+    return true;
+}
+
+int main(int argc, char **argv)
+{
+    if (argc != 3)
+    {
+        PrintUsage(argv[0]);
+        return 1;
+    }
+    const char *Resources[] = {
+        "resources/Invaders.bin",
+        "resources/0.wav",
+        "resources/1.wav",
+        "resources/2.wav",
+        "resources/3.wav",
+        "resources/4.wav",
+        "resources/5.wav",
+        "resources/6.wav",
+        "resources/7.wav",
+        "resources/8.wav",
+    };
+    const char *ResourceIdentifiers[] = {
+        "gSpaceInvadersRom",
+        "gUFOSound",
+        "gShotSound",
+        "gPlayerDieSound",
+        "gInvaderDieSound",
+        "gFleet1Sound",
+        "gFleet2Sound",
+        "gFleet3Sound",
+        "gFleet4Sound",
+        "gUFOHitSound",
+    };
+    if (STATIC_ARRAY_SIZE(Resources) != STATIC_ARRAY_SIZE(ResourceIdentifiers))
+        UNREACHABLE("file count != resource name count");
+    int RawResourcesCount = STATIC_ARRAY_SIZE(Resources);
+
+    const char *SourceName = argv[1];
+    const char *HeaderName = argv[2];
+    
+    FILE *SourceFile = fopen(SourceName, "wb");
+    if (NULL == SourceFile)
+    {
+        perror(SourceName);
+        return 1;
+    }
+    FILE *HeaderFile = fopen(HeaderName, "wb");
+    if (NULL == HeaderFile)
+    {
+        perror(HeaderName);
+        fclose(SourceFile);
+        return 1;
+    }
+
+    const char *HeaderGuard = "RESOURCES_H";
+    fprintf(HeaderFile, 
+        "#ifndef %s\n"
+        "#define %s\n", 
+        HeaderGuard, 
+        HeaderGuard
+    );
+    for (int i = 0; i < RawResourcesCount; i++)
+    {
+        if (!CompileResource(Resources[i], ResourceIdentifiers[i], SourceFile, HeaderFile))
+            break;
+    }
+    fprintf(HeaderFile, "#endif /* %s */", HeaderGuard);
+
+    fclose(SourceFile);
+    fclose(HeaderFile);
     return 0;
 }
 

@@ -6,18 +6,12 @@ set "CC=tcc -Oz -Wall -Wpedantic -Wextra %INCARG%"
 
 if "%1"=="clean" (
     if exist bin rmdir /q /s bin
-    if "%2"=="resources" rmdir /q /s resources
 ) else (
-    if not exist bin\ mkdir bin
-    %CC% -o bin\ResourceCompiler.exe src\ResourceCompiler.c
+    if not exist bin\ (
+        mkdir bin
 
-    if not exist resources\ (
-        mkdir resources
-        bin\ResourceCompiler.exe ^
-            rom\invaders.bin ^
-            gSpaceInvadersRom ^
-            resources\SpaceInvadersRom.c ^
-            resources\SpaceInvadersRom.h
+        %CC% -o bin\ResourceCompiler.exe src\ResourceCompiler.c
+        bin\ResourceCompiler.exe resources\Resources.c resources\Resources.h
     )
 
     %CC% -DSTANDALONE -o bin\Disassembler.exe src\Disassembler.c
@@ -25,6 +19,6 @@ if "%1"=="clean" (
     %CC% -DPLATFORM_WIN32 -municode -Wl,-subsystem=windows ^
         -o bin\Win32.exe ^
         src\Win32.c ^
-        resources\SpaceInvadersRom.c ^
+        resources\Resources.c ^
         -lgdi32
 )

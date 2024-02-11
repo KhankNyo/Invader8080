@@ -6,6 +6,7 @@
 #include <stdbool.h>
 
 #define IN_RANGE(Lower, n, Upper) ((Lower) <= (n) && (n) <= (Upper))
+#define STATIC_ARRAY_SIZE(Arr) (sizeof(Arr)/sizeof((Arr)[0]))
 #define NONNULL(Ptr) if (NULL == Ptr) UNREACHABLE("Null pointer")
 #define DIE() abort()
 

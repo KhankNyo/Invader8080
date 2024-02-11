@@ -4,7 +4,7 @@
 #  error "Invaders.c cannot be compiled as a standalone file, it should be included in the platform files."
 #endif /* STANDALONE */
 
-#include "SpaceInvadersRom.h"
+#include "Resources.h"
 #include "Platform.h"
 #include "8080.c"
 
@@ -101,9 +101,13 @@ static void PortWriteByte(Intel8080 *i8080, uint16_t Port, uint8_t Byte)
 {
     switch (Port)
     {
+    case W_SOUND1: 
+    {
+    } break;
+    case W_SOUND2: 
+    {
+    } break;
     case W_SHIFTAMNT:   sHardware.SR.ShiftAmount = Byte & 0x7; break;
-    case W_SOUND1: break;
-    case W_SOUND2: break;
     case W_SHIFT_DATA:  sHardware.SR.Data = ((uint16_t)Byte << 8) | (sHardware.SR.Data >> 8); break;
     }
 }
@@ -156,7 +160,7 @@ void Invader_Setup(void)
 {
     if (gSpaceInvadersRomSize != 0x2000)
     {
-        Platform_PrintError("Corrupted rom.");
+        Platform_PrintError("Corrupted rom (size != 8192).");
         Platform_Exit(1);
     }
     sI8080 = I8080Init(0, NULL, 
