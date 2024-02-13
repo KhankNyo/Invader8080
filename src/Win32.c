@@ -371,14 +371,14 @@ PlatformSoundBuffer *Platform_RetrieveSoundBuffer(unsigned SampleDurationInMilli
         return NULL;
     }
 
-    sSoundBuffer.WrittenSizeBytes += BytesToWrite ;
+    sSoundBuffer.WrittenSizeBytes += BytesToWrite;
     sSoundBuffer.WrittenSizeBytes %= sSoundBuffer.BufferSizeBytes;
     return &sSoundBuffer;
 }
 
 void Platform_ClearSoundBuffer(PlatformSoundBuffer *Sound)
 {
-    for (size_t i = 0; i < Sound->BufferSizeBytes*2; i++)
+    for (size_t i = 0; i < Sound->BufferSizeBytes*sizeof(Sound->Buffer[0]); i++)
     {
         Sound->Buffer[i] = 0;
     }
@@ -395,7 +395,12 @@ void Platform_MixSoundBuffer(PlatformSoundBuffer *Sound, const void *Data, size_
     MixingSize /= 2;
     for (unsigned i = 0; i < MixingSize; i++)
     {
-        Sound->Buffer[i] += SampleData[i];
+        int32_t Result = Sound->Buffer[i] + SampleData[i];
+        if (Result > INT16_MAX)
+            Result = INT16_MAX;
+        else if (Result < INT16_MIN)
+            Result = INT16_MIN;
+        Sound->Buffer[i] = Result;
     }
 }
 
@@ -408,7 +413,7 @@ void Platform_CommitSoundBuffer(PlatformSoundBuffer *Sound)
            SecondRegion;
     if (SUCCEEDED(METHOD_CALL(sWin32_SecondarySoundBuffer, 
         Lock)(sWin32_SecondarySoundBuffer, 
-            BytesToLock, BytesToWrite, 
+            Sound->WrittenSizeBytes, BytesToWrite, 
             &FirstRegion, &FirstRegionSize, 
             &SecondRegion, &SecondRegionSize, 
             0
