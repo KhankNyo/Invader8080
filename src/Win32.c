@@ -20,10 +20,10 @@ typedef struct Win32_SoundConfig
 } Win32_SoundConfig;
 
 static uint8_t sBackBuffer[256*224 * 4];
-static int16_t SoundBuffer[48000 * 2];
+static int16_t sSoundBuffer[48000 * 2];
 static HWND sMainWindow;
 static LPDIRECTSOUNDBUFFER sWin32_SecondarySoundBuffer;
-static PlatformSoundBuffer sSoundBuffer;
+static PlatformSoundBuffer sSound;
 static Win32_SoundConfig *sSoundConfig;
 
 
@@ -218,45 +218,15 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWCHAR CmdLine, 
     }
     else
     {
-        Platform_ClearSoundBuffer(&sSoundBuffer);
+        Platform_ClearSoundBuffer(&sSound);
         METHOD_CALL(sWin32_SecondarySoundBuffer, Play)(sWin32_SecondarySoundBuffer, 0, 0, DSBPLAY_LOOPING);
         sSoundConfig = &LocalSoundConfig;
     }
 
     Invader_Setup();
-    unsigned Start = GetTickCount();
     while (Win32_PollInputs())
     {
         Invader_Loop();
-
-        /* update sound 60 times a second */
-        if (GetTickCount() - Start > 1000 / 60)
-        {
-            DWORD BytesToLock = 
-                (SoundInfo.SampleIndex * SoundInfo.SampleSize) 
-                % sSoundConfig->BufferSize;
-
-            /* get the play and write cursor */
-            DWORD PlayCursor, 
-                  WriteCursor;
-            METHOD_CALL(sWin32_SecondarySoundBuffer, GetCurrentPosition)(sWin32_SecondarySoundBuffer, 
-                &PlayCursor, &WriteCursor
-            );
-            DWORD WriteSize = 0;
-            if (WriteCursor > PlayCursor) /* write cursor is ahead */
-            {
-                WriteSize = sSoundConfig->BufferSize - BytesToLock;
-                WriteSize += PlayCursor;
-            }
-            else if (WriteCursor < PlayCursor) /* write cursor is behind */
-            {
-                WriteSize = PlayCursor - BytesToLock;
-            }
-
-            Platform_FillSoundBuffer(&SoundInfo, BytesToLock, WriteSize);
-            Start = GetTickCount();
-        }
-        
     }
     /* dont't need to cleanup the windows, Windows does it for us */
     ExitProcess(0);
@@ -341,44 +311,34 @@ PlatformSoundBuffer *Platform_RetrieveSoundBuffer(unsigned SampleDurationInMilli
         return NULL;
     }
 
-    DWORD BytesToLock = 
-        (sSoundBuffer.WrittenSizeBytes * sSoundConfig->SampleSize)
-        % sSoundBuffer.BufferSizeBytes;
+    DWORD BytesToLock = (sSound.WrittenSizeBytes * sSoundConfig->SampleSize)
+        % sizeof sSoundBuffer;
     DWORD BytesToWrite = 0;
     if (WriteCursor > PlayCursor)
     {
-        DWORD Available = sSoundBuffer.WrittenSizeBytes + sSoundBuffer.BufferSizeBytes;
+        DWORD Available = sizeof sSoundBuffer;
         BytesToWrite = Available - BytesToLock;
         BytesToWrite += PlayCursor;
     }
     else if (WriteCursor > PlayCursor)
     {
-        BytesToWrite = WriteCursor - WriteCursor;
+        BytesToWrite = WriteCursor - PlayCursor;
     }
-
-
-    LPVOID FirstRegion, 
-           SecondRegion;
-    DWORD FirstRegionSize,
-          SecondRegionSize;
-    if (FAILED(METHOD_CALL(sWin32_SecondarySoundBuffer, Lock)(sWin32_SecondarySoundBuffer, 
-        BytesToLock, BytesToWrite, 
-        &FirstRegion, &FirstRegionSize, 
-        &SecondRegion, &SecondRegionSize, 
-        0
-    )))
-    {
-        return NULL;
-    }
-
-    sSoundBuffer.WrittenSizeBytes += BytesToWrite;
-    sSoundBuffer.WrittenSizeBytes %= sSoundBuffer.BufferSizeBytes;
-    return &sSoundBuffer;
+    sSound.WrittenSizeBytes += BytesToWrite;
+    sSound.WrittenSizeBytes %= sSoundConfig->BufferSize;
+    sSound.Buffer = sSoundBuffer;
+    sSound.SamplePerSec = sSoundConfig->SamplesPerSec;
+    sSound.SampleSize = sSoundConfig->SampleSize;
+    sSound.BufferSizeBytes = BytesToWrite;
+    return &sSound;
 }
 
 void Platform_ClearSoundBuffer(PlatformSoundBuffer *Sound)
 {
-    for (size_t i = 0; i < Sound->BufferSizeBytes*sizeof(Sound->Buffer[0]); i++)
+    if (NULL == Sound->Buffer)
+        return;
+
+    for (size_t i = 0; i < Sound->BufferSizeBytes / sizeof Sound->Buffer[0]; i++)
     {
         Sound->Buffer[i] = 0;
     }
@@ -412,41 +372,26 @@ void Platform_CommitSoundBuffer(PlatformSoundBuffer *Sound)
     LPVOID FirstRegion,
            SecondRegion;
     if (SUCCEEDED(METHOD_CALL(sWin32_SecondarySoundBuffer, 
-        Lock)(sWin32_SecondarySoundBuffer, 
-            Sound->WrittenSizeBytes, BytesToWrite, 
-            &FirstRegion, &FirstRegionSize, 
-            &SecondRegion, &SecondRegionSize, 
-            0
-        )))
+    Lock)(sWin32_SecondarySoundBuffer, 
+        Sound->WrittenSizeBytes, Sound->BufferSizeBytes, 
+        &FirstRegion, &FirstRegionSize, 
+        &SecondRegion, &SecondRegionSize, 
+        0
+    )))
     {
         int16_t *SampleOut = FirstRegion;
-        for (DWORD i = 0; i < FirstRegionSize/Info->SampleSize; i++)
+        int16_t *Buffer = Sound->Buffer;
+        for (DWORD i = 0; i < FirstRegionSize / Sound->SampleSize; i++)
         {
-            float t = 2.0*PI*((float)Info->SampleIndex / (float)Info->SampleDuration);
-            float SineOutput = sinf(t);
-            int16_t SoundData = SineOutput * (int16_t)Info->SoundVolume;
-            Info->SampleIndex++;
-
-            /* left */
-            /* right */
-            *SampleOut++ = SoundData;
-            *SampleOut++ = SoundData;
+            *SampleOut++ = *Buffer++;
+            *SampleOut++ = *Buffer++;
         }
-
         SampleOut = SecondRegion;
-        for (DWORD i = 0; i < SecondRegionSize/Info->SampleSize; i++)
+        for (DWORD i = 0; i < SecondRegionSize / Sound->SampleSize; i++)
         {
-            float t = 2.0*PI*((float)Info->SampleIndex / (float)Info->SampleDuration);
-            float SineOutput = sinf(t);
-            int16_t SoundData = SineOutput * (int16_t)Info->SoundVolume;
-            Info->SampleIndex++;
-
-            /* left */
-            /* right */
-            *SampleOut++ = SoundData;
-            *SampleOut++ = SoundData;
+            *SampleOut++ = *Buffer++;
+            *SampleOut++ = *Buffer++;
         }
-
         METHOD_CALL(sWin32_SecondarySoundBuffer, 
             Unlock)(sWin32_SecondarySoundBuffer, 
                 FirstRegion, FirstRegionSize,
@@ -454,61 +399,6 @@ void Platform_CommitSoundBuffer(PlatformSoundBuffer *Sound)
         );
     }
 }
-
-
-
-void Platform_FillSoundBuffer(PlatformSound *Info, uint32_t BytesToLock, uint32_t BytesToWrite)
-{
-    /* get the regions inside the sound buffer available for writing */
-    DWORD FirstRegionSize,
-          SecondRegionSize;
-    LPVOID FirstRegion,
-           SecondRegion;
-    if (SUCCEEDED(METHOD_CALL(sWin32_SecondarySoundBuffer, 
-        Lock)(sWin32_SecondarySoundBuffer, 
-            BytesToLock, BytesToWrite, 
-            &FirstRegion, &FirstRegionSize, 
-            &SecondRegion, &SecondRegionSize, 
-            0
-        )))
-    {
-        int16_t *SampleOut = FirstRegion;
-        for (DWORD i = 0; i < FirstRegionSize/Info->SampleSize; i++)
-        {
-            float t = 2.0*PI*((float)Info->SampleIndex / (float)Info->SampleDuration);
-            float SineOutput = sinf(t);
-            int16_t SoundData = SineOutput * (int16_t)Info->SoundVolume;
-            Info->SampleIndex++;
-
-            /* left */
-            /* right */
-            *SampleOut++ = SoundData;
-            *SampleOut++ = SoundData;
-        }
-
-        SampleOut = SecondRegion;
-        for (DWORD i = 0; i < SecondRegionSize/Info->SampleSize; i++)
-        {
-            float t = 2.0*PI*((float)Info->SampleIndex / (float)Info->SampleDuration);
-            float SineOutput = sinf(t);
-            int16_t SoundData = SineOutput * (int16_t)Info->SoundVolume;
-            Info->SampleIndex++;
-
-            /* left */
-            /* right */
-            *SampleOut++ = SoundData;
-            *SampleOut++ = SoundData;
-        }
-
-        METHOD_CALL(sWin32_SecondarySoundBuffer, 
-            Unlock)(sWin32_SecondarySoundBuffer, 
-                FirstRegion, FirstRegionSize,
-                SecondRegion, SecondRegionSize
-        );
-    }
-}
-
-
 
 
 void Platform_Exit(int ExitCode)

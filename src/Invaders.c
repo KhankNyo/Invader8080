@@ -113,10 +113,10 @@ static void PushWAVSound(const void *WAVSound, size_t SizeInBytes)
 {
     const uint8_t *WAVSoundBytes = WAVSound;
     /* where data section of WAV sound file starts */
-    int WAVDataSectionOffset = 44;
+    size_t WAVDataSectionOffset = 44;
 
     DEBUG_ASSERT(sSoundNodeCount < STATIC_ARRAY_SIZE(sSoundNodeList));
-    DEBUG_ASSERT(SizeInBytes < WAVDataSectionOffset);
+    DEBUG_ASSERT(SizeInBytes >= WAVDataSectionOffset);
 
     SoundNode *CurrentSound = &sSoundNodeList[sSoundNodeCount++];
     CurrentSound->Buffer = WAVSoundBytes + WAVDataSectionOffset;
@@ -135,7 +135,7 @@ static void PortWriteByte(Intel8080 *i8080, uint16_t Port, uint8_t Byte)
         static uint8_t Last = 0;
         if (ON_EDGE(Byte, Last, 0))
         {
-            PushWAVSound(gUFOSound, gShotSoundSize);
+            PushWAVSound(gUFOSound, gUFOSoundSize);
         }
         if (ON_EDGE(Byte, Last, 1))
         {
