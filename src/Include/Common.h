@@ -16,8 +16,11 @@
     fprintf(stderr, "Unreachable code path: " __VA_ARGS__);\
     DIE();\
 } while (0)
+#  define DEBUG_ASSERT(x) if (!(x)) UNREACHABLE("Assertion failed: " ## x)
+
 #else
-#  define UNREACHABLE(...) do {} while (0)
+#  define UNREACHABLE(...)  do {} while (0)
+#  define DEBUG_ASSERT(x)         do {} while (0)
 #endif /* DEBUG */
 
 

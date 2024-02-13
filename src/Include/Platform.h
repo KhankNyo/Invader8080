@@ -12,18 +12,25 @@ typedef unsigned char Bool8;
 #define false 0
 #define true 1
 
-typedef struct PlatformSound PlatformSound;
+typedef struct PlatformSoundBuffer 
+{
+    int16_t *Buffer;
+    size_t BufferSizeBytes;
+    size_t WrittenSizeBytes;
+    uint32_t SamplePerSec;
+    uint32_t SampleSize;
+} PlatformSoundBuffer;
 
 double Platform_GetTimeMillisec(void);
 void *Platform_GetBackBuffer(void);
 void Platform_SwapBuffer(void);
-void Platform_FillSoundBuffer(
-    PlatformSound *Buffer, uint32_t BytesToLock, uint32_t BytesToWrite
-);
 
-PlatformSound *Platform_CreateSound(const void *SoundBuffer, size_t BufferSize, Bool8 Looped);
-Bool8 Platform_PlaySound(PlatformSound *Sound);
-void Platform_DestroySound(PlatformSound *Sound);
+/* also locks the sound buffer */
+PlatformSoundBuffer *Platform_RetrieveSoundBuffer(unsigned SampleDurationInMillisec);
+void Platform_ClearSoundBuffer(PlatformSoundBuffer *Sound);
+void Platform_MixSoundBuffer(PlatformSoundBuffer *Sound, const void *Data, size_t DataSize);
+/* also unlocks the sound buffer */
+void Platform_CommitSoundBuffer(PlatformSoundBuffer *Sound);
 
 void Platform_Exit(int ExitCode);
 void Platform_PrintError(const char *ErrorMessage);

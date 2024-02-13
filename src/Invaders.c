@@ -41,18 +41,19 @@ typedef struct PortHardware
             Player2;
 } PortHardware;
 
-typedef struct SoundData 
+typedef struct SoundNode 
 {
-    const void *Ptr;
-    uint32_t Size;
-} SoundData;
-
+    const uint8_t *Buffer;
+    size_t BufferSize;
+} SoundNode;
 static PortHardware sHardware = { 0 };
 static Intel8080 sI8080 = { 0 };
 static uint8_t sRam[0x2400 - 0x2000];
 static uint8_t sVideoMemory[0x4000 - 0x2400];
 
-static SoundData sUFOSoundData;
+static SoundNode sSoundNodeList[256];
+static size_t sSoundNodeCount;
+
 
 
 
@@ -108,7 +109,20 @@ static uint8_t PortReadByte(Intel8080 *i8080, uint16_t Port)
     return Byte;
 }
 
-#include <stdio.h>
+static void PushWAVSound(const void *WAVSound, size_t SizeInBytes)
+{
+    const uint8_t *WAVSoundBytes = WAVSound;
+    /* where data section of WAV sound file starts */
+    int WAVDataSectionOffset = 44;
+
+    DEBUG_ASSERT(sSoundNodeCount < STATIC_ARRAY_SIZE(sSoundNodeList));
+    DEBUG_ASSERT(SizeInBytes < WAVDataSectionOffset);
+
+    SoundNode *CurrentSound = &sSoundNodeList[sSoundNodeCount++];
+    CurrentSound->Buffer = WAVSoundBytes + WAVDataSectionOffset;
+    CurrentSound->BufferSize = SizeInBytes - WAVDataSectionOffset;
+}
+
 
 static void PortWriteByte(Intel8080 *i8080, uint16_t Port, uint8_t Byte)
 {
@@ -121,9 +135,11 @@ static void PortWriteByte(Intel8080 *i8080, uint16_t Port, uint8_t Byte)
         static uint8_t Last = 0;
         if (ON_EDGE(Byte, Last, 0))
         {
+            PushWAVSound(gUFOSound, gShotSoundSize);
         }
         if (ON_EDGE(Byte, Last, 1))
         {
+            PushWAVSound(gShotSound, gShotSoundSize);
         }
         if (ON_EDGE(Byte, Last, 2))
         {
@@ -202,24 +218,15 @@ void Invader_OnKeyDown(PlatformKey Key)
 }
 
 
-static uint32_t LEByteArrayToU32(const uint8_t *Ptr)
-{
-    return Ptr[0] 
-         | (uint32_t)Ptr[1] << 8
-         | (uint32_t)Ptr[2] << 16
-         | (uint32_t)Ptr[3] << 24;
-}
-
 
 void Invader_Setup(void)
 {
-    sUFOSoundData.Ptr = gUFOSound + 44;
-    sUFOSoundData.Size = LEByteArrayToU32(gUFOSound + 40);
     if (gSpaceInvadersRomSize != 0x2000)
     {
         Platform_PrintError("Corrupted rom (size != 8192).");
         Platform_Exit(1);
     }
+
     sI8080 = I8080Init(0, NULL, 
         MemReadByte, MemWriteByte, 
         PortReadByte, PortWriteByte
@@ -227,6 +234,32 @@ void Invader_Setup(void)
 
     sHardware.Player1 = 1 << 2; /* player 1 start */
     sHardware.Player2 = 0x03; /* 6 ships */
+
+
+}
+
+static void MixAndPlaySound(PlatformSoundBuffer *Sound)
+{
+    Platform_ClearSoundBuffer(Sound);
+    size_t UnfinishedSoundCount = 0;
+    for (unsigned i = 0; i < sSoundNodeCount; i++)
+    {
+        const uint8_t *Buffer = sSoundNodeList[i].Buffer;
+        size_t BufferSize = sSoundNodeList[i].BufferSize;
+        if (BufferSize > Sound->BufferSizeBytes)
+        {
+            /* truncate the buffer */
+            sSoundNodeList[i].Buffer += Sound->BufferSizeBytes;
+            sSoundNodeList[i].BufferSize -= Sound->BufferSizeBytes;
+            BufferSize = Sound->BufferSizeBytes;
+
+            /* 'push' the unfinished sound back into the buffer */
+            sSoundNodeList[UnfinishedSoundCount++] = sSoundNodeList[i];
+        }
+        Platform_MixSoundBuffer(Sound, Buffer, BufferSize);
+    }
+
+    sSoundNodeCount = UnfinishedSoundCount;
 }
 
 
@@ -236,10 +269,13 @@ void Invader_Loop(void)
     Cycles++;
     I8080AdvanceClock(&sI8080);
 
-    if (Cycles == 16666) /* about mid frame */
+    /* mid-frame interrupt */
+    if (Cycles == 16666) 
     {
         I8080Interrupt(&sI8080, 1);
     }
+
+    /* TODO: remove all these magic-ass numbers, they're making me sick */
     /* 1 frame finished */
     if (Cycles == 33333)
     {
@@ -268,6 +304,13 @@ void Invader_Loop(void)
             Sleep(1000.0 / 60.0 - ElapsedTime);
         }
         sStartTime = Platform_GetTimeMillisec();
+
+        PlatformSoundBuffer *Sound = Platform_RetrieveSoundBuffer(1000 / 60);
+        if (NULL != Sound)
+        {
+            MixAndPlaySound(Sound);
+            Platform_CommitSoundBuffer(Sound);
+        }
     }
 }
 
