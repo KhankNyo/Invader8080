@@ -210,7 +210,7 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWCHAR CmdLine, 
         Invader_Loop();
 
         double Current = Platform_GetTimeMillisec();
-        if (Current - Last >= 1000.0 / 60 
+        if (Current - Last >= 1000.0 / 300 
         && NULL != sSoundBufferPtr)
         {
             Last = Current;
@@ -221,30 +221,32 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWCHAR CmdLine, 
             )) && PlayCursor != LastPlayCursor)
             {
                 LastPlayCursor = PlayCursor;
-                DWORD BytesToLock = 0;
-                if (PlayCursor < WriteCursor)
-                    BytesToLock = PlayCursor + sSoundBufferSize - WriteCursor;
-                else if (WriteCursor < PlayCursor)
-                    BytesToLock = PlayCursor - WriteCursor;
+
+                int SampleSize = sSoundFormat->nBlockAlign;
+                static uint32_t SoundBufferIndex = 0;
+                DWORD BytesToLock = (SoundBufferIndex * SampleSize) % sSoundBufferSize;
+                DWORD BytesToWrite = 0;
+                if (PlayCursor < BytesToLock)
+                    BytesToWrite = PlayCursor + sSoundBufferSize - BytesToLock;
+                else if (BytesToLock < PlayCursor)
+                    BytesToWrite = PlayCursor - BytesToLock;
 
                 DWORD FirstRegionSize, SecondRegionSize;
                 LPVOID FirstRegion, SecondRegion;
                 if (SUCCEEDED(METHOD_CALL(sSecondaryBuffer, 
                     Lock(sSecondaryBuffer, 
-                        0, 0, 
+                        BytesToLock, BytesToWrite, 
                         &FirstRegion, &FirstRegionSize,
                         &SecondRegion, &SecondRegionSize, 
-                        DSBLOCK_ENTIREBUFFER
+                        0
                     )
                 )))
                 {
                     /* sine wave */
-                    static uint32_t SoundBufferIndex = 0;
                     SoundBufferIndex %= sSoundBufferSize;
                     uint32_t Hz = 440;
                     float SampleDuration = (float)sSoundFormat->nSamplesPerSec / (float)Hz;
-                    float SoundVolume = 3000;
-                    int SampleSize = sSoundFormat->nBlockAlign;
+                    float SoundVolume = 5000;
                     int16_t *SoundRegion = FirstRegion;
                     for (DWORD i = 0; i < FirstRegionSize / SampleSize; i++)
                     {
