@@ -16,7 +16,6 @@ typedef struct PlatformSoundBuffer
 {
     int16_t *Buffer;
     size_t BufferSizeBytes;
-    size_t WrittenSizeBytes;
     uint32_t SamplePerSec;
     uint32_t SampleSize;
 } PlatformSoundBuffer;
@@ -25,7 +24,7 @@ double Platform_GetTimeMillisec(void);
 void *Platform_GetBackBuffer(void);
 void Platform_SwapBuffer(void);
 
-PlatformSoundBuffer *Platform_RetrieveSoundBuffer(unsigned SampleDurationInMillisec);
+PlatformSoundBuffer *Platform_RetrieveSoundBuffer(void);
 void Platform_ClearSoundBuffer(PlatformSoundBuffer *Sound);
 void Platform_MixSoundBuffer(PlatformSoundBuffer *Sound, const void *Data, size_t DataSize);
 void Platform_CommitSoundBuffer(PlatformSoundBuffer *Sound);

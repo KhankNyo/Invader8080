@@ -135,7 +135,7 @@ static void PortWriteByte(Intel8080 *i8080, uint16_t Port, uint8_t Byte)
         static uint8_t Last = 0;
         if (ON_EDGE(Byte, Last, 0))
         {
-            PushWAVSound(gUFOSound, gUFOSoundSize);
+            //PushWAVSound(gUFOSound, gUFOSoundSize);
         }
         if (ON_EDGE(Byte, Last, 1))
         {
@@ -268,11 +268,21 @@ void Invader_Loop(void)
     static unsigned Cycles = 0;
     Cycles++;
     I8080AdvanceClock(&sI8080);
+    if (sSoundNodeCount)
+    {
+        PlatformSoundBuffer *Sound = Platform_RetrieveSoundBuffer();
+        if (NULL != Sound)
+        {
+            MixAndPlaySound(Sound);
+            Platform_CommitSoundBuffer(Sound);
+        }
+    }
 
     /* mid-frame interrupt */
     if (Cycles == 16666) 
     {
         I8080Interrupt(&sI8080, 1);
+
     }
 
     /* TODO: remove all these magic-ass numbers, they're making me sick */
@@ -305,12 +315,6 @@ void Invader_Loop(void)
         }
         sStartTime = Platform_GetTimeMillisec();
 
-        PlatformSoundBuffer *Sound = Platform_RetrieveSoundBuffer(1000 / 60);
-        if (NULL != Sound)
-        {
-            MixAndPlaySound(Sound);
-            Platform_CommitSoundBuffer(Sound);
-        }
     }
 }
 

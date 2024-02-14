@@ -20,5 +20,5 @@ if "%1"=="clean" (
         -o bin\Win32.exe ^
         src\Win32.c ^
         resources\Resources.c ^
-        -lgdi32 -lwinmm
+        -lgdi32 -lole32
 )
