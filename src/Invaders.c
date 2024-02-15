@@ -234,32 +234,6 @@ void Invader_Setup(void)
 
     sHardware.Player1 = 1 << 2; /* player 1 start */
     sHardware.Player2 = 0x03; /* 6 ships */
-
-
-}
-
-static void MixAndPlaySound(PlatformSoundBuffer *Sound)
-{
-    Platform_ClearSoundBuffer(Sound);
-    size_t UnfinishedSoundCount = 0;
-    for (unsigned i = 0; i < sSoundNodeCount; i++)
-    {
-        const uint8_t *Buffer = sSoundNodeList[i].Buffer;
-        size_t BufferSize = sSoundNodeList[i].BufferSize;
-        if (BufferSize > Sound->BufferSizeBytes)
-        {
-            /* truncate the buffer */
-            sSoundNodeList[i].Buffer += Sound->BufferSizeBytes;
-            sSoundNodeList[i].BufferSize -= Sound->BufferSizeBytes;
-            BufferSize = Sound->BufferSizeBytes;
-
-            /* 'push' the unfinished sound back into the buffer */
-            sSoundNodeList[UnfinishedSoundCount++] = sSoundNodeList[i];
-        }
-        Platform_MixSoundBuffer(Sound, Buffer, BufferSize);
-    }
-
-    sSoundNodeCount = UnfinishedSoundCount;
 }
 
 
@@ -268,15 +242,6 @@ void Invader_Loop(void)
     static unsigned Cycles = 0;
     Cycles++;
     I8080AdvanceClock(&sI8080);
-    if (sSoundNodeCount)
-    {
-        PlatformSoundBuffer *Sound = Platform_RetrieveSoundBuffer();
-        if (NULL != Sound)
-        {
-            MixAndPlaySound(Sound);
-            Platform_CommitSoundBuffer(Sound);
-        }
-    }
 
     /* mid-frame interrupt */
     if (Cycles == 16666) 

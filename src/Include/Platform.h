@@ -24,10 +24,7 @@ double Platform_GetTimeMillisec(void);
 void *Platform_GetBackBuffer(void);
 void Platform_SwapBuffer(void);
 
-PlatformSoundBuffer *Platform_RetrieveSoundBuffer(void);
-void Platform_ClearSoundBuffer(PlatformSoundBuffer *Sound);
-void Platform_MixSoundBuffer(PlatformSoundBuffer *Sound, const void *Data, size_t DataSize);
-void Platform_CommitSoundBuffer(PlatformSoundBuffer *Sound);
+void Platform_PlaySound(void);
 
 void Platform_Exit(int ExitCode);
 void Platform_PrintError(const char *ErrorMessage);
