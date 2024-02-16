@@ -1,14 +1,13 @@
 #ifndef INVADER_WIN32_H
 #define INVADER_WIN32_H
 
-#include <windows.h>
 
 typedef enum PlatformKey 
 {
-    KEY_LEFT = VK_LEFT,
-    KEY_RIGHT = VK_RIGHT,
-    KEY_SPACE = VK_SPACE,
-    KEY_ENTER = VK_RETURN,
+    KEY_LEFT = 0x25,        /* VK_LEFT */
+    KEY_RIGHT = 0x27,       /* VK_RIGHT */
+    KEY_SPACE = 0x20,       /* VK_SPACE */
+    KEY_ENTER = 0x0D,       /* VK_RETURN */
     KEY_1 = '1', 
     KEY_2 = '2',
     KEY_A = 'A',

@@ -83,11 +83,10 @@ static void Win32_WaveOutCallback(
     DWORD_PTR Param1, 
     DWORD_PTR Param2)
 {
-    (void)WaveOut, (void)Param1, (void)Param2;
+    (void)WaveOut, (void)Instance, (void)Param1, (void)Param2;
     if (WOM_DONE != Msg)
         return;
 
-    void *UserData = (void*)Instance;
     /* queue not empty */
     if (sHead != sTail)
     {
@@ -100,7 +99,7 @@ static void Win32_WaveOutCallback(
         sHead = 0;
         sTail = 0;
     }
-    Invader_OnSoundEnd(UserData, Platform_GetTimeMillisec());
+    Invader_OnSoundEnd(Platform_GetTimeMillisec());
 }
 
 

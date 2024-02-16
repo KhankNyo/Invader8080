@@ -46,6 +46,11 @@ static Intel8080 sI8080 = { 0 };
 static uint8_t sRam[0x2400 - 0x2000];
 static uint8_t sVideoMemory[0x4000 - 0x2400];
 
+static int16_t sSoundBuffer[1024 * 1024];
+static uint32_t sSoundBufferSizeBytes;
+static const void *sLoopingSound;
+static uint32_t sLoopingSoundSizeBytes;
+
 
 
 static uint8_t MemReadByte(Intel8080 *i8080, uint16_t Address)
@@ -100,36 +105,64 @@ static uint8_t PortReadByte(Intel8080 *i8080, uint16_t Port)
     return Byte;
 }
 
+static void MemoryCopy(void *Dst, const void *Src, size_t SizeBytes)
+{
+    uint8_t *DstPtr = Dst;
+    const uint8_t *SrcPtr = Src;
+    while (SizeBytes--)
+    {
+        *DstPtr++ = *SrcPtr++;
+    }
+}
+
 
 static void PushSound(const uint8_t *SoundDataBytes, size_t SoundDataSizeBytes, Bool8 FirstSound)
 {
 #define MIN(a, b) a > b? b : a
-    static int16_t SoundBuffer[1024 * 1024];
-    static int16_t *SoundBufferPtr = SoundBuffer;
-    static uint32_t SoundBufferLengthSoFar = 0;
+    static int16_t *SoundBufferPtr = sSoundBuffer;
     const int16_t *SoundData = (const int16_t*)(SoundDataBytes + 44);
     SoundDataSizeBytes -= 44;
     if (FirstSound)
     {
-        CopyMemory(SoundBuffer, SoundData, SoundDataSizeBytes);
-        SoundBufferLengthSoFar = SoundDataSizeBytes;
+        MemoryCopy(sSoundBuffer, SoundData, SoundDataSizeBytes);
+        sSoundBufferSizeBytes = SoundDataSizeBytes;
     }
     else
     {
         /* mix sounds together */
-        size_t MinSize = MIN(SoundBufferLengthSoFar, SoundDataSizeBytes);
+        size_t MinSize = MIN(sSoundBufferSizeBytes, SoundDataSizeBytes);
         for (unsigned i = 0; i < MinSize / 4; i++)
         {
-            *SoundBufferPtr++ = *SoundData++;
-            *SoundBufferPtr++ = *SoundData++;
+            *SoundBufferPtr++ += *SoundData++;
+            *SoundBufferPtr++ += *SoundData++;
+        }
+
+        /* copy the residue sound */
+        if (SoundDataSizeBytes > MinSize)
+        {
+            MemoryCopy(SoundBufferPtr, SoundData, SoundDataSizeBytes - MinSize);
+            sSoundBufferSizeBytes = SoundDataSizeBytes;
         }
     }
 #undef MIN
 }
 
-void Invader_OnSoundEnd(void *UserData, double CurrentTimeMillisec)
+static void SubmitSound(void)
 {
-    ContinueLoopSound(CurrentTimeMillisec);
+    if (sSoundBufferSizeBytes)
+    {
+        Platform_WriteToSoundDevice(sSoundBuffer, sSoundBufferSizeBytes);
+        sSoundBufferSizeBytes = 0;
+    }
+}
+
+void Invader_OnSoundEnd(double CurrentTimeMillisec)
+{
+    /* continues loop sound */
+    if (sLoopingSound)
+    {
+        PushSound(sLoopingSound, sLoopingSoundSizeBytes, true);
+    }
 }
 
 
@@ -145,10 +178,15 @@ static void PortWriteByte(Intel8080 *i8080, uint16_t Port, uint8_t Byte)
     case W_SOUND1: 
     {
         static uint8_t Last = 0;
-        Bool8 FirstSound = true;
+        Bool8 FirstSound = sLoopingSound == NULL;
         if (ON_RISING_EDGE(Byte, Last, 0))
         {
-            LoopSound(gUFOSound, gUFOSoundSize);
+            /* UFO sound loops */
+            sLoopingSound = gUFOSound;
+            sLoopingSoundSizeBytes = gUFOSoundSize;
+
+            PushSound(gUFOSound, gUFOSoundSize, FirstSound);
+            FirstSound = false;
         }
         if (ON_RISING_EDGE(Byte, Last, 1))
         {
@@ -168,8 +206,11 @@ static void PortWriteByte(Intel8080 *i8080, uint16_t Port, uint8_t Byte)
 
         if (ON_FALLING_EDGE(Byte, Last, 0))
         {
-            UnLoopSound(gUFOSound);
+            sLoopingSound = NULL;
+            sLoopingSoundSizeBytes = 0;
         }
+
+        SubmitSound();
         Last = Byte;
     } break;
     case W_SOUND2: 
@@ -190,6 +231,8 @@ static void PortWriteByte(Intel8080 *i8080, uint16_t Port, uint8_t Byte)
         if (ON_RISING_EDGE(Byte, Last, 8))
         {
         }
+
+        SubmitSound();
         Last = Byte;
     } break;
     case W_SHIFTAMNT:   sHardware.SR.ShiftAmount = Byte & 0x7; break;

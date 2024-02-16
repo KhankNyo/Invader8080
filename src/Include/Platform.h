@@ -2,6 +2,7 @@
 #define PLATFORM_H
 
 #include <stdint.h>
+
 #ifdef PLATFORM_WIN32
 #  include "Win32.h"
 #else
@@ -25,7 +26,7 @@ void Platform_Exit(int ExitCode);
 void Invader_Loop(void);
 void Invader_OnKeyDown(PlatformKey Key);
 void Invader_OnKeyUp(PlatformKey Key);
-void Invader_OnSoundEnd(void *UserData, double CurrentTimeMillisec);
+void Invader_OnSoundEnd(double CurrentTimeMillisec);
 
 
 #endif /* PLATFORM_H */
