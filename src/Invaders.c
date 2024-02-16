@@ -101,6 +101,38 @@ static uint8_t PortReadByte(Intel8080 *i8080, uint16_t Port)
 }
 
 
+static void PushSound(const uint8_t *SoundDataBytes, size_t SoundDataSizeBytes, Bool8 FirstSound)
+{
+#define MIN(a, b) a > b? b : a
+    static int16_t SoundBuffer[1024 * 1024];
+    static int16_t *SoundBufferPtr = SoundBuffer;
+    static uint32_t SoundBufferLengthSoFar = 0;
+    const int16_t *SoundData = (const int16_t*)(SoundDataBytes + 44);
+    SoundDataSizeBytes -= 44;
+    if (FirstSound)
+    {
+        CopyMemory(SoundBuffer, SoundData, SoundDataSizeBytes);
+        SoundBufferLengthSoFar = SoundDataSizeBytes;
+    }
+    else
+    {
+        /* mix sounds together */
+        size_t MinSize = MIN(SoundBufferLengthSoFar, SoundDataSizeBytes);
+        for (unsigned i = 0; i < MinSize / 4; i++)
+        {
+            *SoundBufferPtr++ = *SoundData++;
+            *SoundBufferPtr++ = *SoundData++;
+        }
+    }
+#undef MIN
+}
+
+void Invader_OnSoundEnd(void *UserData, double CurrentTimeMillisec)
+{
+    ContinueLoopSound(CurrentTimeMillisec);
+}
+
+
 
 static void PortWriteByte(Intel8080 *i8080, uint16_t Port, uint8_t Byte)
 {
@@ -113,21 +145,30 @@ static void PortWriteByte(Intel8080 *i8080, uint16_t Port, uint8_t Byte)
     case W_SOUND1: 
     {
         static uint8_t Last = 0;
+        Bool8 FirstSound = true;
         if (ON_RISING_EDGE(Byte, Last, 0))
         {
+            LoopSound(gUFOSound, gUFOSoundSize);
         }
         if (ON_RISING_EDGE(Byte, Last, 1))
         {
+            PushSound(gShotSound, gShotSoundSize, FirstSound);
+            FirstSound = false;
         }
         if (ON_RISING_EDGE(Byte, Last, 2))
         {
+            PushSound(gPlayerDieSound, gPlayerDieSoundSize, FirstSound);
+            FirstSound = false;
         }
         if (ON_RISING_EDGE(Byte, Last, 3))
         {
+            PushSound(gInvaderDieSound, gInvaderDieSoundSize, FirstSound);
+            FirstSound = false;
         }
 
         if (ON_FALLING_EDGE(Byte, Last, 0))
         {
+            UnLoopSound(gUFOSound);
         }
         Last = Byte;
     } break;
@@ -159,46 +200,6 @@ static void PortWriteByte(Intel8080 *i8080, uint16_t Port, uint8_t Byte)
 }
 
 
-#include <math.h>
-
-void PlaySineWave(double Time)
-{
-    static int16_t SoundBuffer[44100*2];
-    static int16_t *SoundSample = SoundBuffer;
-    static double StartTime = 0;
-    if (!StartTime)
-    {
-        StartTime = Time;
-    }
-
-    if (SoundSample >= &SoundBuffer[STATIC_ARRAY_SIZE(SoundBuffer)])
-        SoundSample = SoundBuffer;
-
-    float Volume = 3000;
-    unsigned ChannelCount = 2;
-    static unsigned RunningIndex = 0;
-    float SampleDuration = 44100 / 440.0;
-
-    int16_t *CurrentSoundSample = SoundSample;
-    unsigned SampleCount = STATIC_ARRAY_SIZE(SoundBuffer) / ChannelCount / 10;
-    for (unsigned i = 0; i < SampleCount; i++)
-    {
-        float x = 2.0 * 3.14159 * (RunningIndex / SampleDuration);
-        int16_t SampleData = Volume * sinf(x);
-        *SoundSample++ = SampleData;
-        *SoundSample++ = SampleData;
-        RunningIndex++;
-    }
-
-    Platform_WriteToSoundDevice(CurrentSoundSample, SoundSample - CurrentSoundSample);
-}
-
-void Invader_OnSoundEnd(void *UserData, double CurrentTimeMillisec)
-{
-    PlaySineWave(CurrentTimeMillisec);
-}
-
-
 
 void Invader_OnKeyUp(PlatformKey Key)
 {
@@ -227,7 +228,7 @@ void Invader_OnKeyDown(PlatformKey Key)
     {
     case KEY_C:     sHardware.Player1 |= 1 << 0; break; /* coin */
     case KEY_T:     sHardware.Player2 |= 1 << 2; break; /* tilt */
-    case KEY_2:     sHardware.Player2 |= 1 << 1; break; /* player 2 start */
+    case KEY_2:     sHardware.Player1 |= 1 << 1; break; /* player 2 start */
     case KEY_1:     sHardware.Player1 |= 1 << 2; break; /* player 1 start */
 
     case KEY_A:     sHardware.Player1 |= 1 << 5; break;
@@ -255,9 +256,6 @@ void Invader_Setup(void)
         PortReadByte, PortWriteByte
     );
     sHardware.Player2 = 0x03; /* 6 ships */
-    /* push the pipeline */
-    PlaySineWave(Platform_GetTimeMillisec());
-    PlaySineWave(Platform_GetTimeMillisec());
 }
 
 
