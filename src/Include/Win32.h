@@ -2,7 +2,6 @@
 #define INVADER_WIN32_H
 
 #include <windows.h>
-#include <xaudio2.h>
 
 typedef enum PlatformKey 
 {

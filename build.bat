@@ -2,7 +2,7 @@
 
 
 set "INCARG=-I.\src\Include\ -I.\resources\"
-set "CC=gcc -ggdb -DDEBUG -Og -Wall -Wpedantic -Wextra %INCARG%"
+set "CC=gcc -ggdb -O0 -Wall -Wpedantic -Wextra %INCARG%"
 
 if "%1"=="clean" (
     if exist bin rmdir /q /s bin
@@ -20,5 +20,5 @@ if "%1"=="clean" (
         -o bin\Win32.exe ^
         src\Win32.c ^
         resources\Resources.c ^
-        -lgdi32 -lole32
+        -lgdi32 -lwinmm
 )

@@ -1,8 +1,7 @@
 
 #include <windows.h>
-#include <dsound.h>
 #include "Invaders.c"
-#include <math.h>
+#include "Platform.h"
 
 
 #define PI 3.14159265f
@@ -15,10 +14,20 @@
 static uint8_t sBackBuffer[256*224 * 4];
 
 static HWND sMainWindow;
-static LPDIRECTSOUNDBUFFER sSecondaryBuffer;
-static WAVEFORMATEX *sSoundFormat;
-static int16_t *sSoundBufferPtr;
-static uint32_t sSoundBufferSize;
+static WAVEFORMATEX sDefaultAudioFormat = {
+    .nChannels = 2,     /* stereo */
+    .wFormatTag = WAVE_FORMAT_PCM,
+    .wBitsPerSample = 16,
+    .nBlockAlign = 2 * sizeof(int16_t),
+    .nSamplesPerSec = 44100,
+    .nAvgBytesPerSec = 44100 * (2 * sizeof(int16_t)), 
+};
+static HWAVEOUT sSoundDevice;
+static Bool8 sSoundDeviceIsReady;
+static WAVEHDR sBlocks[256] = { 0 };
+static uint8_t sTail;
+static uint8_t sHead;
+
 
 
 
@@ -59,6 +68,54 @@ LRESULT CALLBACK Win32_WndProc(HWND Window, UINT Msg, WPARAM WParam, LPARAM LPar
 }
 
 
+static void Win32_WriteWaveHeaderToSoundDevice(WAVEHDR *Header)
+{
+    if (Header->dwFlags & WHDR_PREPARED)
+        waveOutUnprepareHeader(sSoundDevice, Header, sizeof *Header);
+    waveOutPrepareHeader(sSoundDevice, Header, sizeof *Header);
+    waveOutWrite(sSoundDevice, Header, sizeof *Header);
+}
+
+static void Win32_WaveOutCallback(
+    HWAVEOUT WaveOut, 
+    UINT Msg, 
+    DWORD_PTR Instance, 
+    DWORD_PTR Param1, 
+    DWORD_PTR Param2)
+{
+    (void)WaveOut, (void)Param1, (void)Param2;
+    if (WOM_DONE != Msg)
+        return;
+
+    void *UserData = (void*)Instance;
+    /* queue not empty */
+    if (sHead != sTail)
+    {
+        sTail--;
+        sSoundDeviceIsReady = false;
+    }
+    else  /* sHead == sTail, queue is empty */
+    {
+        sSoundDeviceIsReady = true;
+        sHead = 0;
+        sTail = 0;
+    }
+    Invader_OnSoundEnd(UserData, Platform_GetTimeMillisec());
+}
+
+
+void Platform_WriteToSoundDevice(const void *SoundBuffer, size_t SoundBufferSize)
+{
+    /* pushes the buffer into the queue */
+    WAVEHDR *Current = &sBlocks[sHead--];
+    *Current = (WAVEHDR) {
+        .lpData = (LPSTR)SoundBuffer,
+        .dwBufferLength = SoundBufferSize,
+    };
+    Win32_WriteWaveHeaderToSoundDevice(Current);
+}
+
+
 static BOOL Win32_PollInputs(void)
 {
     MSG Msg;
@@ -73,84 +130,6 @@ static BOOL Win32_PollInputs(void)
     return 1;
 }
 
-static Bool8 Win32_InitDirectSound(HWND Window)
-{
-    HMODULE DirectSoundLibrary = LoadLibraryA("dsound.dll");
-    if (NULL == DirectSoundLibrary)
-    {
-        return false;
-    }
-    typedef WIN32_FN_DIRECT_SOUND_CREATE(Win32FnDirectSoundCreate);
-    Win32FnDirectSoundCreate *DirectSoundCreate = (Win32FnDirectSoundCreate*)
-        GetProcAddress(DirectSoundLibrary, "DirectSoundCreate");
-
-    /* calling ctor */
-    LPDIRECTSOUND DirectSound;
-    if (NULL == DirectSoundCreate 
-    || DirectSoundCreate(NULL, &DirectSound, NULL))
-    {
-        return false;
-    }
-
-    /* set co-op level */
-    if (FAILED(METHOD_CALL(DirectSound, 
-        SetCooperativeLevel(DirectSound, Window, DSSCL_PRIORITY)
-    )))
-    {
-        return false;
-    }
-
-    /* create primary buffer */
-    DSBUFFERDESC PrimaryBufferDescription = {
-        .dwSize = sizeof PrimaryBufferDescription,
-        .dwFlags = DSBCAPS_PRIMARYBUFFER,
-    };
-    LPDIRECTSOUNDBUFFER PrimaryBuffer;
-    if (FAILED(METHOD_CALL(DirectSound, 
-        CreateSoundBuffer(DirectSound, &PrimaryBufferDescription, &PrimaryBuffer, NULL)
-    )))
-    {
-        return false;
-    }
-
-    /* create secondary buffer */
-    /* specify the sound format: PCM 16 bit */
-#define SAMPLES_PER_SEC 44100
-    static int16_t SoundBuffer[SAMPLES_PER_SEC * 2];
-    static WAVEFORMATEX SoundFormatConfig = {
-        .wBitsPerSample     = 16,
-        .nChannels          = 2, /* stereo */
-        .wFormatTag         = WAVE_FORMAT_PCM,
-        .nSamplesPerSec     = SAMPLES_PER_SEC,
-        .nAvgBytesPerSec    = sizeof SoundBuffer,
-        .nBlockAlign        = 2 * sizeof(int16_t),
-    };
-#undef SAMPLES_PER_SEC
-    if (FAILED(METHOD_CALL(PrimaryBuffer, 
-        SetFormat(PrimaryBuffer, &SoundFormatConfig)
-    )))
-    {
-        return false;
-    }
-
-    DSBUFFERDESC SecondaryBufferDescription = {
-        .dwSize = sizeof SecondaryBufferDescription,
-        /* don't set flags here, we don't need any */
-        .lpwfxFormat = &SoundFormatConfig,
-        .dwBufferBytes = sizeof SoundBuffer,
-    };
-    if (FAILED(METHOD_CALL(DirectSound, 
-        CreateSoundBuffer(DirectSound, &SecondaryBufferDescription, &sSecondaryBuffer, NULL)
-    )))
-    {
-        return false;
-    }
-
-    sSoundBufferPtr = SoundBuffer;
-    sSoundBufferSize = sizeof SoundBuffer;
-    sSoundFormat = &SoundFormatConfig;
-    return true;
-}
 
 int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWCHAR CmdLine, int CmdShow)
 {
@@ -191,36 +170,26 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWCHAR CmdLine, 
      * UpdateWindow(sMainWindow);
      * */
 
-    if (SUCCEEDED(CoInitializeEx(NULL, COINIT_MULTITHREADED)) 
-    && Win32_InitDirectSound(sMainWindow)) 
+    if (MMSYSERR_NOERROR != waveOutOpen(
+        &sSoundDevice, 
+        WAVE_MAPPER, 
+        &sDefaultAudioFormat, 
+        (DWORD_PTR)&Win32_WaveOutCallback, 
+        0, 
+        CALLBACK_FUNCTION
+    ))
     {
-        METHOD_CALL(sSecondaryBuffer, Play(sSecondaryBuffer, 0, 0, DSBPLAY_LOOPING));
+        Platform_PrintError("Unable to play sound (waveOutOpen failed).");
     }
     else
     {
-        Platform_PrintError("Unable to initalize DirectSound.");
+        sSoundDeviceIsReady = true;
     }
-    
 
     Invader_Setup();
-    double Last = Platform_GetTimeMillisec();
     while (Win32_PollInputs())
     {
         Invader_Loop();
-
-        double Current = Platform_GetTimeMillisec();
-        if (Current - Last >= 1000.0 / 30)
-        {
-            Last = Current;
-        }
-
-        DWORD PlayCursor, WriteCursor;
-        if (SUCCEEDED(METHOD_CALL(sSecondaryBuffer, 
-            GetCurrentPosition(sSecondaryBuffer, &PlayCursor, &WriteCursor)
-        )))
-        {
-            Platform_PlaySound();
-        }
     }
     /* dont't need to cleanup the windows, Windows does it for us */
     ExitProcess(0);
@@ -288,73 +257,7 @@ void Platform_SwapBuffer(void)
     EndPaint(sMainWindow, &PaintStruct);
 }
 
-void Platform_PlaySound(void)
-{
-    DWORD PlayCursor, WriteCursor;
-    static DWORD PrevPlayCursor = -1;
-    if (SUCCEEDED(METHOD_CALL(sSecondaryBuffer, 
-        GetCurrentPosition(sSecondaryBuffer, &PlayCursor, &WriteCursor)
-    )) && PrevPlayCursor != PlayCursor)
-    {
-        PrevPlayCursor = PlayCursor;
 
-        int SampleSize = sSoundFormat->nBlockAlign;
-        static uint32_t SoundBufferIndex = 0;
-        DWORD BytesToLock = (SoundBufferIndex * SampleSize) % sSoundBufferSize;
-        DWORD BytesToWrite = 0;
-        if (PlayCursor < BytesToLock)
-            BytesToWrite = PlayCursor + sSoundBufferSize - BytesToLock;
-        else if (BytesToLock < PlayCursor)
-            BytesToWrite = PlayCursor - BytesToLock;
-
-        DWORD FirstRegionSize, SecondRegionSize;
-        LPVOID FirstRegion, SecondRegion;
-        if (SUCCEEDED(METHOD_CALL(sSecondaryBuffer, 
-            Lock(sSecondaryBuffer, 
-                BytesToLock, BytesToWrite, 
-                &FirstRegion, &FirstRegionSize,
-                &SecondRegion, &SecondRegionSize, 
-                0
-            )
-        )))
-        {
-            /* sine wave */
-            SoundBufferIndex %= sSoundBufferSize;
-            uint32_t Hz = 440;
-            float SampleDuration = (float)sSoundFormat->nSamplesPerSec / (float)Hz;
-            float SoundVolume = 5000;
-            int16_t *SoundRegion = FirstRegion;
-            for (DWORD i = 0; i < FirstRegionSize / SampleSize; i++)
-            {
-                float x = 2.0 * PI * ((float)SoundBufferIndex / SampleDuration);
-                int16_t SoundData = SoundVolume * sinf(x);
-                /* left, right */
-                *SoundRegion++ = SoundData;
-                *SoundRegion++ = SoundData;
-
-                SoundBufferIndex++;
-            }
-
-            SoundRegion = SecondRegion;
-            for (DWORD i = 0; i < SecondRegionSize / SampleSize; i++)
-            {
-                float x = 2.0 * PI * ((float)SoundBufferIndex / SampleDuration);
-                int16_t SoundData = SoundVolume * sinf(x);
-                /* left, right */
-                *SoundRegion++ = SoundData;
-                *SoundRegion++ = SoundData;
-
-                SoundBufferIndex++;
-            }
-            METHOD_CALL(sSecondaryBuffer, 
-                Unlock(sSecondaryBuffer, 
-                    FirstRegion, FirstRegionSize, 
-                    SecondRegion, SecondRegionSize
-                )
-            );
-        }
-    }
-}
 
 
 

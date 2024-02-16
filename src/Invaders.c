@@ -41,19 +41,10 @@ typedef struct PortHardware
             Player2;
 } PortHardware;
 
-typedef struct SoundNode 
-{
-    const uint8_t *Buffer;
-    size_t BufferSize;
-} SoundNode;
 static PortHardware sHardware = { 0 };
 static Intel8080 sI8080 = { 0 };
 static uint8_t sRam[0x2400 - 0x2000];
 static uint8_t sVideoMemory[0x4000 - 0x2400];
-
-static SoundNode sSoundNodeList[256];
-static size_t sSoundNodeCount;
-
 
 
 
@@ -109,42 +100,33 @@ static uint8_t PortReadByte(Intel8080 *i8080, uint16_t Port)
     return Byte;
 }
 
-static void PushWAVSound(const void *WAVSound, size_t SizeInBytes)
-{
-    const uint8_t *WAVSoundBytes = WAVSound;
-    /* where data section of WAV sound file starts */
-    size_t WAVDataSectionOffset = 44;
-
-    DEBUG_ASSERT(sSoundNodeCount < STATIC_ARRAY_SIZE(sSoundNodeList));
-    DEBUG_ASSERT(SizeInBytes >= WAVDataSectionOffset);
-
-    SoundNode *CurrentSound = &sSoundNodeList[sSoundNodeCount++];
-    CurrentSound->Buffer = WAVSoundBytes + WAVDataSectionOffset;
-    CurrentSound->BufferSize = SizeInBytes - WAVDataSectionOffset;
-}
 
 
 static void PortWriteByte(Intel8080 *i8080, uint16_t Port, uint8_t Byte)
 {
-#define ON_EDGE(Curr, Prev, Bit) ((Curr & (1 << Bit)) && 0 == (Prev & (1 << Bit)))
+#define ON_RISING_EDGE(Curr, Prev, Bit) ((Curr & (1 << Bit)) && 0 == (Prev & (1 << Bit)))
+#define ON_FALLING_EDGE(Curr, Prev, Bit) ((Curr & (1 << Bit)) == 0 && (Prev & (1 << Bit)))
+
     (void)i8080;
     switch (Port)
     {
     case W_SOUND1: 
     {
         static uint8_t Last = 0;
-        if (ON_EDGE(Byte, Last, 0))
-        {
-            //PushWAVSound(gUFOSound, gUFOSoundSize);
-        }
-        if (ON_EDGE(Byte, Last, 1))
-        {
-            PushWAVSound(gShotSound, gShotSoundSize);
-        }
-        if (ON_EDGE(Byte, Last, 2))
+        if (ON_RISING_EDGE(Byte, Last, 0))
         {
         }
-        if (ON_EDGE(Byte, Last, 3))
+        if (ON_RISING_EDGE(Byte, Last, 1))
+        {
+        }
+        if (ON_RISING_EDGE(Byte, Last, 2))
+        {
+        }
+        if (ON_RISING_EDGE(Byte, Last, 3))
+        {
+        }
+
+        if (ON_FALLING_EDGE(Byte, Last, 0))
         {
         }
         Last = Byte;
@@ -152,19 +134,19 @@ static void PortWriteByte(Intel8080 *i8080, uint16_t Port, uint8_t Byte)
     case W_SOUND2: 
     {
         static uint8_t Last = 0;
-        if (ON_EDGE(Byte, Last, 4))
+        if (ON_RISING_EDGE(Byte, Last, 4))
         {
         }
-        if (ON_EDGE(Byte, Last, 5))
+        if (ON_RISING_EDGE(Byte, Last, 5))
         {
         }
-        if (ON_EDGE(Byte, Last, 6))
+        if (ON_RISING_EDGE(Byte, Last, 6))
         {
         }
-        if (ON_EDGE(Byte, Last, 7))
+        if (ON_RISING_EDGE(Byte, Last, 7))
         {
         }
-        if (ON_EDGE(Byte, Last, 8))
+        if (ON_RISING_EDGE(Byte, Last, 8))
         {
         }
         Last = Byte;
@@ -172,8 +154,50 @@ static void PortWriteByte(Intel8080 *i8080, uint16_t Port, uint8_t Byte)
     case W_SHIFTAMNT:   sHardware.SR.ShiftAmount = Byte & 0x7; break;
     case W_SHIFT_DATA:  sHardware.SR.Data = ((uint16_t)Byte << 8) | (sHardware.SR.Data >> 8); break;
     }
-#undef ON_EDGE
+#undef ON_RISING_EDGE
+#undef ON_FALLING_EDGE
 }
+
+
+#include <math.h>
+
+void PlaySineWave(double Time)
+{
+    static int16_t SoundBuffer[44100*2];
+    static int16_t *SoundSample = SoundBuffer;
+    static double StartTime = 0;
+    if (!StartTime)
+    {
+        StartTime = Time;
+    }
+
+    if (SoundSample >= &SoundBuffer[STATIC_ARRAY_SIZE(SoundBuffer)])
+        SoundSample = SoundBuffer;
+
+    float Volume = 3000;
+    unsigned ChannelCount = 2;
+    static unsigned RunningIndex = 0;
+    float SampleDuration = 44100 / 440.0;
+
+    int16_t *CurrentSoundSample = SoundSample;
+    unsigned SampleCount = STATIC_ARRAY_SIZE(SoundBuffer) / ChannelCount / 10;
+    for (unsigned i = 0; i < SampleCount; i++)
+    {
+        float x = 2.0 * 3.14159 * (RunningIndex / SampleDuration);
+        int16_t SampleData = Volume * sinf(x);
+        *SoundSample++ = SampleData;
+        *SoundSample++ = SampleData;
+        RunningIndex++;
+    }
+
+    Platform_WriteToSoundDevice(CurrentSoundSample, SoundSample - CurrentSoundSample);
+}
+
+void Invader_OnSoundEnd(void *UserData, double CurrentTimeMillisec)
+{
+    PlaySineWave(CurrentTimeMillisec);
+}
+
 
 
 void Invader_OnKeyUp(PlatformKey Key)
@@ -218,7 +242,6 @@ void Invader_OnKeyDown(PlatformKey Key)
 }
 
 
-
 void Invader_Setup(void)
 {
     if (gSpaceInvadersRomSize != 0x2000)
@@ -231,9 +254,10 @@ void Invader_Setup(void)
         MemReadByte, MemWriteByte, 
         PortReadByte, PortWriteByte
     );
-
-    sHardware.Player1 = 1 << 2; /* player 1 start */
     sHardware.Player2 = 0x03; /* 6 ships */
+    /* push the pipeline */
+    PlaySineWave(Platform_GetTimeMillisec());
+    PlaySineWave(Platform_GetTimeMillisec());
 }
 
 
@@ -247,7 +271,6 @@ void Invader_Loop(void)
     if (Cycles == 16666) 
     {
         I8080Interrupt(&sI8080, 1);
-
     }
 
     /* TODO: remove all these magic-ass numbers, they're making me sick */
@@ -279,7 +302,6 @@ void Invader_Loop(void)
             Sleep(1000.0 / 60.0 - ElapsedTime);
         }
         sStartTime = Platform_GetTimeMillisec();
-
     }
 }
 

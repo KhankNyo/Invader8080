@@ -12,22 +12,20 @@ typedef unsigned char Bool8;
 #define false 0
 #define true 1
 
-typedef struct PlatformSoundBuffer 
-{
-    int16_t *Buffer;
-    size_t BufferSizeBytes;
-    uint32_t SamplePerSec;
-    uint32_t SampleSize;
-} PlatformSoundBuffer;
-
 double Platform_GetTimeMillisec(void);
 void *Platform_GetBackBuffer(void);
 void Platform_SwapBuffer(void);
 
-void Platform_PlaySound(void);
+void Platform_WriteToSoundDevice(const void *SoundBuffer, size_t SoundBufferSize);
 
-void Platform_Exit(int ExitCode);
 void Platform_PrintError(const char *ErrorMessage);
+void Platform_Exit(int ExitCode);
+
+
+void Invader_Loop(void);
+void Invader_OnKeyDown(PlatformKey Key);
+void Invader_OnKeyUp(PlatformKey Key);
+void Invader_OnSoundEnd(void *UserData, double CurrentTimeMillisec);
 
 
 #endif /* PLATFORM_H */
