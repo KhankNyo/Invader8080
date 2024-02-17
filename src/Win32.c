@@ -25,8 +25,9 @@ static WAVEFORMATEX sDefaultAudioFormat = {
 static HWAVEOUT sSoundDevice;
 static Bool8 sSoundDeviceIsReady;
 static WAVEHDR sBlocks[256] = { 0 };
-static uint8_t sTail;
-static uint8_t sHead;
+static uint8_t sTail = 255;
+static uint8_t sHead = 255;
+static unsigned sQueueSize = 20;
 
 
 
@@ -76,6 +77,16 @@ static void Win32_WriteWaveHeaderToSoundDevice(WAVEHDR *Header)
     waveOutWrite(sSoundDevice, Header, sizeof *Header);
 }
 
+
+static unsigned Win32_SoundDeviceQueueSize(void)
+{
+    int Val = sTail - sHead;
+    if (sHead > sTail)
+        Val += 256;
+    return (unsigned)ABS(Val);
+}
+
+
 static void Win32_WaveOutCallback(
     HWAVEOUT WaveOut, 
     UINT Msg, 
@@ -87,31 +98,52 @@ static void Win32_WaveOutCallback(
     if (WOM_DONE != Msg)
         return;
 
-    /* queue not empty */
-    if (sHead != sTail)
-    {
-        sTail--;
-        sSoundDeviceIsReady = false;
-    }
-    else  /* sHead == sTail, queue is empty */
+    unsigned QueueSize = Win32_SoundDeviceQueueSize();
+    if (QueueSize < sQueueSize)
     {
         sSoundDeviceIsReady = true;
-        sHead = 0;
-        sTail = 0;
+        if (QueueSize == 0)
+        {
+            sTail = 255;
+            sHead = 255;
+        }
+        else sTail--;
+        Invader_OnSoundEnd(Platform_GetTimeMillisec());
     }
-    Invader_OnSoundEnd(Platform_GetTimeMillisec());
+    else
+    {
+        sSoundDeviceIsReady = false;
+        sTail--;
+        uint8_t Index = sTail - sQueueSize;
+        Win32_WriteWaveHeaderToSoundDevice(&sBlocks[Index]);
+    }
 }
 
+Bool8 Platform_SoundDeviceIsReady(void)
+{
+    return sSoundDeviceIsReady;
+}
 
 void Platform_WriteToSoundDevice(const void *SoundBuffer, size_t SoundBufferSize)
 {
-    /* pushes the buffer into the queue */
-    WAVEHDR *Current = &sBlocks[sHead--];
-    *Current = (WAVEHDR) {
+    if (sHead == sTail)
+    {
+        sHead = 255;
+        sTail = 255;
+    }
+
+    /* push the new block into the queue */
+    WAVEHDR *NewBlock = &sBlocks[sHead--];
+    *NewBlock = (WAVEHDR){
         .lpData = (LPSTR)SoundBuffer,
         .dwBufferLength = SoundBufferSize,
     };
-    Win32_WriteWaveHeaderToSoundDevice(Current);
+
+    if (Win32_SoundDeviceQueueSize() < sQueueSize)
+    {
+        Win32_WriteWaveHeaderToSoundDevice(NewBlock);
+    }
+    else sSoundDeviceIsReady = false; 
 }
 
 
@@ -196,6 +228,10 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWCHAR CmdLine, 
 
 
 
+void Platform_Sleep(unsigned Millisec)
+{
+    Sleep(Millisec);
+}
 
 double Platform_GetTimeMillisec(void)
 {

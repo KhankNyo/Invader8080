@@ -26,7 +26,7 @@
 #  define DEBUG_ASSERT(x)   do {} while (0)
 #endif /* DEBUG */
 
-
+#define ABS(v) ((v) < 0? -(v) : (v))
 
 static inline unsigned BitCount32(uint32_t n)
 {

@@ -17,10 +17,12 @@ double Platform_GetTimeMillisec(void);
 void *Platform_GetBackBuffer(void);
 void Platform_SwapBuffer(void);
 
+Bool8 Platform_SoundDeviceIsReady(void);
 void Platform_WriteToSoundDevice(const void *SoundBuffer, size_t SoundBufferSize);
 
 void Platform_PrintError(const char *ErrorMessage);
 void Platform_Exit(int ExitCode);
+void Platform_Sleep(unsigned Millisec);
 
 
 void Invader_Loop(void);

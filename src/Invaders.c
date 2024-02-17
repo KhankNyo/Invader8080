@@ -46,9 +46,10 @@ static Intel8080 sI8080 = { 0 };
 static uint8_t sRam[0x2400 - 0x2000];
 static uint8_t sVideoMemory[0x4000 - 0x2400];
 
-static int16_t sSoundBuffer[1024 * 1024];
+static uint8_t sCurrentSoundBuffer;
+static int16_t sSoundBuffer[256][200 * 1024];
 static uint32_t sSoundBufferSizeBytes;
-static const void *sLoopingSound;
+static const uint8_t *sLoopingSound;
 static uint32_t sLoopingSoundSizeBytes;
 
 
@@ -116,24 +117,27 @@ static void MemoryCopy(void *Dst, const void *Src, size_t SizeBytes)
 }
 
 
-static void PushSound(const uint8_t *SoundDataBytes, size_t SoundDataSizeBytes, Bool8 FirstSound)
+
+
+static void PushSound(const uint8_t *SoundDataBytes, size_t SoundDataSizeBytes)
 {
 #define MIN(a, b) a > b? b : a
-    static int16_t *SoundBufferPtr = sSoundBuffer;
+    static int16_t *SoundBufferPtr = NULL;
     const int16_t *SoundData = (const int16_t*)(SoundDataBytes + 44);
+    SoundBufferPtr = sSoundBuffer[sCurrentSoundBuffer];
     SoundDataSizeBytes -= 44;
-    if (FirstSound)
+    if (sSoundBufferSizeBytes == 0)
     {
-        MemoryCopy(sSoundBuffer, SoundData, SoundDataSizeBytes);
+        MemoryCopy(sSoundBuffer[sCurrentSoundBuffer], SoundData, SoundDataSizeBytes);
         sSoundBufferSizeBytes = SoundDataSizeBytes;
     }
     else
     {
         /* mix sounds together */
+        unsigned SoundSampleSize = 2;
         size_t MinSize = MIN(sSoundBufferSizeBytes, SoundDataSizeBytes);
-        for (unsigned i = 0; i < MinSize / 4; i++)
+        for (unsigned i = 0; i < MinSize / SoundSampleSize; i++)
         {
-            *SoundBufferPtr++ += *SoundData++;
             *SoundBufferPtr++ += *SoundData++;
         }
 
@@ -147,22 +151,48 @@ static void PushSound(const uint8_t *SoundDataBytes, size_t SoundDataSizeBytes, 
 #undef MIN
 }
 
+
+/* submits sound buffer to the sound device, also adds the looping sound */
 static void SubmitSound(void)
 {
-    if (sSoundBufferSizeBytes)
+    unsigned LoopingSizeBytes = (sLoopingSoundSizeBytes - 44);
+    const int16_t *LoopingSound = (const int16_t *)(sLoopingSound + 44);
+    static unsigned SampleIndex = 0;
+    if (NULL == sLoopingSound)
+        SampleIndex = 0;
+
+    if (sSoundBufferSizeBytes == 0)
     {
-        Platform_WriteToSoundDevice(sSoundBuffer, sSoundBufferSizeBytes);
-        sSoundBufferSizeBytes = 0;
+        if (sLoopingSound)
+        {
+            Platform_WriteToSoundDevice(LoopingSound, LoopingSizeBytes);
+        }
     }
+    else
+    {
+        if (sLoopingSound)
+        {
+            int16_t *SoundBuffer = sSoundBuffer[sCurrentSoundBuffer];
+            for (unsigned i = 0; i < sSoundBufferSizeBytes / sizeof *SoundBuffer; i++)
+            {
+                *SoundBuffer++ += LoopingSound[SampleIndex++ % (LoopingSizeBytes/sizeof *LoopingSound)];
+            }
+        }
+        Platform_WriteToSoundDevice(sSoundBuffer[sCurrentSoundBuffer], sSoundBufferSizeBytes);
+
+        sCurrentSoundBuffer++;
+        /* any compiler will optimize this, even tcc */
+        if (STATIC_ARRAY_SIZE(sSoundBuffer) != 256 && 
+        sizeof sCurrentSoundBuffer != sizeof(uint8_t))
+        {
+            sCurrentSoundBuffer %= STATIC_ARRAY_SIZE(sSoundBuffer);
+        }
+    }
+    sSoundBufferSizeBytes = 0;
 }
 
 void Invader_OnSoundEnd(double CurrentTimeMillisec)
 {
-    /* continues loop sound */
-    if (sLoopingSound)
-    {
-        PushSound(sLoopingSound, sLoopingSoundSizeBytes, true);
-    }
 }
 
 
@@ -178,30 +208,23 @@ static void PortWriteByte(Intel8080 *i8080, uint16_t Port, uint8_t Byte)
     case W_SOUND1: 
     {
         static uint8_t Last = 0;
-        Bool8 FirstSound = sLoopingSound == NULL;
         if (ON_RISING_EDGE(Byte, Last, 0))
         {
             /* UFO sound loops */
             sLoopingSound = gUFOSound;
             sLoopingSoundSizeBytes = gUFOSoundSize;
-
-            PushSound(gUFOSound, gUFOSoundSize, FirstSound);
-            FirstSound = false;
         }
         if (ON_RISING_EDGE(Byte, Last, 1))
         {
-            PushSound(gShotSound, gShotSoundSize, FirstSound);
-            FirstSound = false;
+            PushSound(gShotSound, gShotSoundSize);
         }
         if (ON_RISING_EDGE(Byte, Last, 2))
         {
-            PushSound(gPlayerDieSound, gPlayerDieSoundSize, FirstSound);
-            FirstSound = false;
+            PushSound(gPlayerDieSound, gPlayerDieSoundSize);
         }
         if (ON_RISING_EDGE(Byte, Last, 3))
         {
-            PushSound(gInvaderDieSound, gInvaderDieSoundSize, FirstSound);
-            FirstSound = false;
+            PushSound(gInvaderDieSound, gInvaderDieSoundSize);
         }
 
         if (ON_FALLING_EDGE(Byte, Last, 0))
@@ -209,30 +232,31 @@ static void PortWriteByte(Intel8080 *i8080, uint16_t Port, uint8_t Byte)
             sLoopingSound = NULL;
             sLoopingSoundSizeBytes = 0;
         }
-
-        SubmitSound();
         Last = Byte;
     } break;
     case W_SOUND2: 
     {
         static uint8_t Last = 0;
+        if (ON_RISING_EDGE(Byte, Last, 0))
+        {
+            PushSound(gFleet1Sound, gFleet1SoundSize);
+        }
+        if (ON_RISING_EDGE(Byte, Last, 1))
+        {
+            PushSound(gFleet2Sound, gFleet2SoundSize);
+        }
+        if (ON_RISING_EDGE(Byte, Last, 2))
+        {
+            PushSound(gFleet3Sound, gFleet3SoundSize);
+        }
+        if (ON_RISING_EDGE(Byte, Last, 3))
+        {
+            PushSound(gFleet4Sound, gFleet4SoundSize);
+        }
         if (ON_RISING_EDGE(Byte, Last, 4))
         {
+            PushSound(gUFOHitSound, gUFOHitSoundSize);
         }
-        if (ON_RISING_EDGE(Byte, Last, 5))
-        {
-        }
-        if (ON_RISING_EDGE(Byte, Last, 6))
-        {
-        }
-        if (ON_RISING_EDGE(Byte, Last, 7))
-        {
-        }
-        if (ON_RISING_EDGE(Byte, Last, 8))
-        {
-        }
-
-        SubmitSound();
         Last = Byte;
     } break;
     case W_SHIFTAMNT:   sHardware.SR.ShiftAmount = Byte & 0x7; break;
@@ -307,6 +331,10 @@ void Invader_Loop(void)
     static unsigned Cycles = 0;
     Cycles++;
     I8080AdvanceClock(&sI8080);
+    if (Cycles % (33333 / 10) == 0 && Platform_SoundDeviceIsReady())
+    {
+        SubmitSound();
+    }
 
     /* mid-frame interrupt */
     if (Cycles == 16666) 
@@ -340,7 +368,7 @@ void Invader_Loop(void)
         double ElapsedTime = Platform_GetTimeMillisec() - sStartTime;
         if (ElapsedTime < 1000.0 / 60.0)
         {
-            Sleep(1000.0 / 60.0 - ElapsedTime);
+            Platform_Sleep(1000.0 / 60.0 - ElapsedTime);
         }
         sStartTime = Platform_GetTimeMillisec();
     }
