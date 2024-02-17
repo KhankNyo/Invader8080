@@ -4,14 +4,14 @@
 #include "Platform.h"
 
 
-#define PI 3.14159265f
 #define METHOD_CALL(pObj, Meth) (pObj)->lpVtbl->Meth
 #define DESTRUCT(pObj) if (NULL != (pObj)) METHOD_CALL(pObj, Release)(pObj)
 #define WIN32_FN_DIRECT_SOUND_CREATE(name)\
     HRESULT WINAPI name(LPGUID lpGuid, LPDIRECTSOUND* ppDS, LPUNKNOWN  pUnkOuter)
+#define SOUND_QUEUE_INITVAL 255
 
 
-static uint8_t sBackBuffer[256*224 * 4];
+static PlatformBackBuffer sWin32_BackBuffer = { 0 };
 
 static HWND sMainWindow;
 static WAVEFORMATEX sDefaultAudioFormat = {
@@ -22,21 +22,20 @@ static WAVEFORMATEX sDefaultAudioFormat = {
     .nSamplesPerSec = 44100,
     .nAvgBytesPerSec = 44100 * (2 * sizeof(int16_t)), 
 };
+static BITMAPINFO sBitmapInfo = {
+    .bmiHeader.biSize = sizeof(sBitmapInfo.bmiHeader),
+    .bmiHeader.biWidth = 0,
+    .bmiHeader.biHeight = 0, 
+    .bmiHeader.biPlanes = 1,
+    .bmiHeader.biBitCount = 32,
+    .bmiHeader.biCompression = BI_RGB,
+};
 static HWAVEOUT sSoundDevice;
 static Bool8 sSoundDeviceIsReady;
 static WAVEHDR sBlocks[256] = { 0 };
-static uint8_t sTail = 255;
-static uint8_t sHead = 255;
-static unsigned sQueueSize = 20;
-
-
-
-
-static void Win32_Fatal(const wchar_t *ErrorMessage)
-{
-    MessageBoxW(NULL, ErrorMessage, L"Fatal Error", MB_ICONERROR);
-    ExitProcess(1);
-}
+static uint8_t sTail = SOUND_QUEUE_INITVAL;
+static uint8_t sHead = SOUND_QUEUE_INITVAL;
+static unsigned sQueueSize = 16;
 
 
 LRESULT CALLBACK Win32_WndProc(HWND Window, UINT Msg, WPARAM WParam, LPARAM LParam)
@@ -58,7 +57,7 @@ LRESULT CALLBACK Win32_WndProc(HWND Window, UINT Msg, WPARAM WParam, LPARAM LPar
     } break;
     case WM_PAINT:
     {
-        Platform_SwapBuffer();
+        Platform_SwapBuffer(&sWin32_BackBuffer);
     } break;
     default: 
     {
@@ -82,7 +81,7 @@ static unsigned Win32_SoundDeviceQueueSize(void)
 {
     int Val = sTail - sHead;
     if (sHead > sTail)
-        Val += 256;
+        Val += STATIC_ARRAY_SIZE(sBlocks);
     return (unsigned)ABS(Val);
 }
 
@@ -104,11 +103,10 @@ static void Win32_WaveOutCallback(
         sSoundDeviceIsReady = true;
         if (QueueSize == 0)
         {
-            sTail = 255;
-            sHead = 255;
+            sTail = SOUND_QUEUE_INITVAL;
+            sHead = SOUND_QUEUE_INITVAL;
         }
         else sTail--;
-        Invader_OnSoundEnd(Platform_GetTimeMillisec());
     }
     else
     {
@@ -128,8 +126,8 @@ void Platform_WriteToSoundDevice(const void *SoundBuffer, size_t SoundBufferSize
 {
     if (sHead == sTail)
     {
-        sHead = 255;
-        sTail = 255;
+        sHead = SOUND_QUEUE_INITVAL;
+        sTail = SOUND_QUEUE_INITVAL;
     }
 
     /* push the new block into the queue */
@@ -147,18 +145,18 @@ void Platform_WriteToSoundDevice(const void *SoundBuffer, size_t SoundBufferSize
 }
 
 
-static BOOL Win32_PollInputs(void)
+static Bool8 Win32_PollInputs(void)
 {
     MSG Msg;
     while (PeekMessageW(&Msg, 0, 0, 0, PM_REMOVE))
     {
         if (Msg.message == WM_QUIT)
-            return 0;
+            return false;
 
         TranslateMessage(&Msg);
         DispatchMessageW(&Msg);
     }
-    return 1;
+    return true;
 }
 
 
@@ -189,7 +187,7 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWCHAR CmdLine, 
     );
     if (NULL == sMainWindow)
     {
-        Win32_Fatal(L"Cannot create window");
+        Platform_FatalError("Cannot create window");
     }
     ShowWindow(sMainWindow, SW_SHOW);
     /*
@@ -201,20 +199,17 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWCHAR CmdLine, 
      * UpdateWindow(sMainWindow);
      * */
 
-    if (MMSYSERR_NOERROR != waveOutOpen(
+    sSoundDeviceIsReady = MMSYSERR_NOERROR == waveOutOpen(
         &sSoundDevice, 
         WAVE_MAPPER, 
         &sDefaultAudioFormat, 
         (DWORD_PTR)&Win32_WaveOutCallback, 
         0, 
         CALLBACK_FUNCTION
-    ))
+    );
+    if (!sSoundDeviceIsReady)
     {
         Platform_PrintError("Unable to play sound (waveOutOpen failed).");
-    }
-    else
-    {
-        sSoundDeviceIsReady = true;
     }
 
     Invader_Setup();
@@ -238,12 +233,44 @@ double Platform_GetTimeMillisec(void)
     return GetTickCount64();
 }
 
-void *Platform_GetBackBuffer(void)
+
+void Platform_SetBackBufferDimension(uint32_t Width, uint32_t Height)
 {
-    return sBackBuffer;
+    sWin32_BackBuffer.Width = Width;
+    sWin32_BackBuffer.Height = Height;
+
+    uint32_t *Buffer = sWin32_BackBuffer.Data;
+    if (NULL != Buffer)
+    {
+        VirtualFree(Buffer, 0, MEM_RELEASE);
+    }
+    Buffer = VirtualAlloc(
+        NULL, 
+        Width * Height * sizeof(Buffer[0]), 
+        MEM_COMMIT, 
+        PAGE_READWRITE
+    );
+    if (NULL == Buffer)
+    {
+        Platform_FatalError("Unable to resize window.");
+    }
+    
+    /* memset 0 */
+    for (uint32_t i = 0; i < Width*Height; i++)
+    {
+        Buffer[i] = 0;
+    }
+
+    sWin32_BackBuffer.Data = Buffer;
 }
 
-void Platform_SwapBuffer(void)
+PlatformBackBuffer Platform_GetBackBuffer(void)
+{
+    return sWin32_BackBuffer;
+}
+
+
+void Platform_SwapBuffer(const PlatformBackBuffer *BackBuffer)
 {
     /* force Windows to redraw the window */
     InvalidateRect(sMainWindow, NULL, FALSE);
@@ -256,36 +283,30 @@ void Platform_SwapBuffer(void)
         DstY = Rect.top,
         DstW = Rect.right - Rect.left,
         DstH = Rect.bottom - Rect.top;
-    double AspectRatio = (double)DstW / DstH;
+    double ScreenAspectRatio = (double)DstW / DstH;
+    double BackBufferAspectRatio = (double)BackBuffer->Width / (double)BackBuffer->Height;
     /* window is wider than game */
-    if (AspectRatio > 224.f / 256.f)
+    if (ScreenAspectRatio > BackBufferAspectRatio)
     {
         /* scale width to fit */
-        DstW = DstH * 224.f / 256.f;
+        DstW = DstH * BackBufferAspectRatio;
         int Middle = (Rect.right - Rect.left) / 2;
         DstX = DstX + Middle - DstW/2;
     }
     else /* game is wider */
     {
         /* scale height to fit */
-        DstH = DstW * 256.f / 224.f;
+        DstH = DstW / BackBufferAspectRatio;
         int Middle = (Rect.bottom - Rect.top) / 2;
         DstY = DstY + Middle - DstH/2;
     }
 
-    static const BITMAPINFO BitmapInfo = {
-        .bmiHeader.biSize = sizeof(BitmapInfo.bmiHeader),
-        .bmiHeader.biWidth = 224,
-        .bmiHeader.biHeight = -256, /* reverse, buffer going from top to bottom */
-        .bmiHeader.biPlanes = 1,
-        .bmiHeader.biBitCount = 32,
-        .bmiHeader.biCompression = BI_RGB,
-    };
-
+    sBitmapInfo.bmiHeader.biWidth = BackBuffer->Width;
+    sBitmapInfo.bmiHeader.biHeight = -BackBuffer->Height; /* reverse, buffer going from top to bottom */
     StretchDIBits(DeviceContext, 
         DstX, DstY, DstW, DstH, 
-        0, 0, 224, 256, 
-        sBackBuffer, &BitmapInfo, 
+        0, 0, BackBuffer->Width, BackBuffer->Height, 
+        BackBuffer->Data, &sBitmapInfo, 
         DIB_RGB_COLORS, SRCCOPY
     );
 
@@ -300,6 +321,12 @@ void Platform_SwapBuffer(void)
 void Platform_Exit(int ExitCode)
 {
     ExitProcess(ExitCode);
+}
+
+void Platform_FatalError(const char *ErrorMessage)
+{
+    MessageBoxA(NULL, ErrorMessage, "Fatal Error", MB_ICONERROR);
+    ExitProcess(1);
 }
 
 void Platform_PrintError(const char *ErrorMessage)

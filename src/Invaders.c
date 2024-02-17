@@ -21,11 +21,11 @@ typedef enum InvaderReadPort
 
 typedef enum InvaderWritePort
 {
-    W_SHIFTAMNT = 2,  
-    W_SOUND1 = 3,         
-    W_SHIFT_DATA = 4,       
-    W_SOUND2 = 5,         
-    W_WATCHDOG = 6,       
+    W_SHIFTAMNT     = 2,  
+    W_SOUND1        = 3,         
+    W_SHIFT_DATA    = 4,       
+    W_SOUND2        = 5,         
+    W_WATCHDOG      = 6,       
 } InvaderWritePort;
 
 typedef struct ShiftRegister 
@@ -41,16 +41,25 @@ typedef struct PortHardware
             Player2;
 } PortHardware;
 
+#define WHITE 0x00FFFFFFul
+#define BLACK 0x00000000ul
+#define GREEN_MASK 0x0000FF00ul
+#define YELLOW_MASK 0x00FFFF00ul
+#define CLOCK_RATE 2000000ul
+#define WAVE_FILE_DATA_OFFSET 44
+
 static PortHardware sHardware = { 0 };
 static Intel8080 sI8080 = { 0 };
 static uint8_t sRam[0x2400 - 0x2000];
 static uint8_t sVideoMemory[0x4000 - 0x2400];
 
 static uint8_t sCurrentSoundBuffer;
-static int16_t sSoundBuffer[256][200 * 1024];
+static int16_t sSoundBuffer[16][200 * 1024];
 static uint32_t sSoundBufferSizeBytes;
 static const uint8_t *sLoopingSound;
 static uint32_t sLoopingSoundSizeBytes;
+
+
 
 
 
@@ -118,14 +127,13 @@ static void MemoryCopy(void *Dst, const void *Src, size_t SizeBytes)
 
 
 
-
 static void PushSound(const uint8_t *SoundDataBytes, size_t SoundDataSizeBytes)
 {
 #define MIN(a, b) a > b? b : a
-    static int16_t *SoundBufferPtr = NULL;
-    const int16_t *SoundData = (const int16_t*)(SoundDataBytes + 44);
+    static int16_t *SoundBufferPtr;
+    const int16_t *SoundData = (const int16_t*)(SoundDataBytes + WAVE_FILE_DATA_OFFSET);
     SoundBufferPtr = sSoundBuffer[sCurrentSoundBuffer];
-    SoundDataSizeBytes -= 44;
+    SoundDataSizeBytes -= WAVE_FILE_DATA_OFFSET;
     if (sSoundBufferSizeBytes == 0)
     {
         MemoryCopy(sSoundBuffer[sCurrentSoundBuffer], SoundData, SoundDataSizeBytes);
@@ -134,7 +142,7 @@ static void PushSound(const uint8_t *SoundDataBytes, size_t SoundDataSizeBytes)
     else
     {
         /* mix sounds together */
-        unsigned SoundSampleSize = 2;
+        unsigned SoundSampleSize = sizeof *SoundData;
         size_t MinSize = MIN(sSoundBufferSizeBytes, SoundDataSizeBytes);
         for (unsigned i = 0; i < MinSize / SoundSampleSize; i++)
         {
@@ -155,8 +163,8 @@ static void PushSound(const uint8_t *SoundDataBytes, size_t SoundDataSizeBytes)
 /* submits sound buffer to the sound device, also adds the looping sound */
 static void SubmitSound(void)
 {
-    unsigned LoopingSizeBytes = (sLoopingSoundSizeBytes - 44);
-    const int16_t *LoopingSound = (const int16_t *)(sLoopingSound + 44);
+    unsigned LoopingSizeBytes = (sLoopingSoundSizeBytes - WAVE_FILE_DATA_OFFSET);
+    const int16_t *LoopingSound = (const int16_t *)(sLoopingSound + WAVE_FILE_DATA_OFFSET);
     static unsigned SampleIndex = 0;
     if (NULL == sLoopingSound)
         SampleIndex = 0;
@@ -179,22 +187,11 @@ static void SubmitSound(void)
             }
         }
         Platform_WriteToSoundDevice(sSoundBuffer[sCurrentSoundBuffer], sSoundBufferSizeBytes);
-
         sCurrentSoundBuffer++;
-        /* any compiler will optimize this, even tcc */
-        if (STATIC_ARRAY_SIZE(sSoundBuffer) != 256 && 
-        sizeof sCurrentSoundBuffer != sizeof(uint8_t))
-        {
-            sCurrentSoundBuffer %= STATIC_ARRAY_SIZE(sSoundBuffer);
-        }
+        sCurrentSoundBuffer %= STATIC_ARRAY_SIZE(sSoundBuffer);
     }
     sSoundBufferSizeBytes = 0;
 }
-
-void Invader_OnSoundEnd(double CurrentTimeMillisec)
-{
-}
-
 
 
 static void PortWriteByte(Intel8080 *i8080, uint16_t Port, uint8_t Byte)
@@ -314,8 +311,7 @@ void Invader_Setup(void)
 {
     if (gSpaceInvadersRomSize != 0x2000)
     {
-        Platform_PrintError("Corrupted rom (size != 8192).");
-        Platform_Exit(1);
+        Platform_FatalError("Corrupted rom (size != 8192).");
     }
 
     sI8080 = I8080Init(0, NULL, 
@@ -323,54 +319,68 @@ void Invader_Setup(void)
         PortReadByte, PortWriteByte
     );
     sHardware.Player2 = 0x03; /* 6 ships */
+
+    Platform_SetBackBufferDimension(224, 256);
 }
 
 
 void Invader_Loop(void)
 {
     static unsigned Cycles = 0;
+    uint32_t FPSTarget = 60;
+    uint32_t CyclesPerFrames = CLOCK_RATE / FPSTarget;
+
     Cycles++;
     I8080AdvanceClock(&sI8080);
-    if (Cycles % (33333 / 10) == 0 && Platform_SoundDeviceIsReady())
+
+    if ((Cycles % (CyclesPerFrames / 5)) == 0 
+    && Platform_SoundDeviceIsReady())
     {
         SubmitSound();
     }
 
     /* mid-frame interrupt */
-    if (Cycles == 16666) 
+    if (Cycles == CyclesPerFrames / 2) 
     {
         I8080Interrupt(&sI8080, 1);
     }
 
-    /* TODO: remove all these magic-ass numbers, they're making me sick */
     /* 1 frame finished */
-    if (Cycles == 33333)
+    if (Cycles == CyclesPerFrames)
     {
-        uint32_t *Buffer = Platform_GetBackBuffer();
-        for (int UnrotatedX = 255; UnrotatedX > 0; UnrotatedX--)
+        PlatformBackBuffer BackBuffer = Platform_GetBackBuffer();
+        uint32_t *Buffer = BackBuffer.Data;
+        for (int UnrotatedX = BackBuffer.Height - 1; UnrotatedX >= 0; UnrotatedX--)
         {
-            for (int UnrotatedY = 0; UnrotatedY < 224; UnrotatedY++)
+            for (int UnrotatedY = 0; UnrotatedY < (int)BackBuffer.Width; UnrotatedY++)
             {
                 /* ARGB */
-                int VideoIndex = UnrotatedX + UnrotatedY*256;
+                int VideoIndex = UnrotatedX + UnrotatedY * BackBuffer.Height;
                 uint32_t Pixel = 1 & (sVideoMemory[VideoIndex/8] >> (VideoIndex % 8))?
-                    0x00FFFFFF: 0x00000000;
-                if (Pixel && UnrotatedX < 80)
-                    Pixel = 0x0000FF00;
+                    WHITE: BLACK;
+
+                if (UnrotatedX < 80)
+                    Pixel &= GREEN_MASK;
+                if (UnrotatedX > 180)
+                    Pixel &= YELLOW_MASK;
+
                 *Buffer++ = Pixel;
             }
         }
-        Platform_SwapBuffer();
+        Platform_SwapBuffer(&BackBuffer);
+
+        /* screen interrupt */
         I8080Interrupt(&sI8080, 2);
 
-        Cycles = 0;
         static double sStartTime = 0;
         double ElapsedTime = Platform_GetTimeMillisec() - sStartTime;
-        if (ElapsedTime < 1000.0 / 60.0)
+        if (ElapsedTime < 1000.0 / FPSTarget)
         {
-            Platform_Sleep(1000.0 / 60.0 - ElapsedTime);
+            Platform_Sleep(1000.0 / FPSTarget - ElapsedTime);
         }
         sStartTime = Platform_GetTimeMillisec();
+
+        Cycles = 0;
     }
 }
 
