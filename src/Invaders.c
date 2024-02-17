@@ -130,9 +130,8 @@ static void MemoryCopy(void *Dst, const void *Src, size_t SizeBytes)
 static void PushSound(const uint8_t *SoundDataBytes, size_t SoundDataSizeBytes)
 {
 #define MIN(a, b) a > b? b : a
-    static int16_t *SoundBufferPtr;
+    int16_t *SoundBufferPtr = sSoundBuffer[sCurrentSoundBuffer];
     const int16_t *SoundData = (const int16_t*)(SoundDataBytes + WAVE_FILE_DATA_OFFSET);
-    SoundBufferPtr = sSoundBuffer[sCurrentSoundBuffer];
     SoundDataSizeBytes -= WAVE_FILE_DATA_OFFSET;
     if (sSoundBufferSizeBytes == 0)
     {
