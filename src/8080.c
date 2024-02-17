@@ -14,9 +14,9 @@ struct Intel8080
                     M,  /* NOTE: M is not a real register, it's a place holder for mode 110, 
                            which is a memory reference through HL */
                     A;
-        };
-        uint8_t R[8];
-    };
+        } Name;
+        uint8_t Idx[8];
+    } Reg;
     uint8_t Status;
     uint8_t Clock;
     uint16_t PC;
@@ -70,10 +70,10 @@ typedef enum I8080Flags
 #define HAS_MIDDLE_CARRY(Ret, A, B) \
     (1 & ( ((~(Ret)&((A) | (B))) | ((A)&(B))) >> 3))
 #define READ_PAIR(High, Low) \
-    (((uint16_t)i8080->High << 8) | i8080->Low)
+    (((uint16_t)i8080->Reg.Name.High << 8) | i8080->Reg.Name.Low)
 #define WRITE_PAIR(High, Low, Dat) do {\
-        i8080->High = (Dat) >> 8; \
-        i8080->Low = (Dat) & 0xFF;\
+        i8080->Reg.Name.High = (Dat) >> 8; \
+        i8080->Reg.Name.Low = (Dat) & 0xFF;\
     } while (0)
 #define READ_SRC(IntoVariable, SrcEncoding, Cyc, CycMem, CycReg) do {\
         unsigned sss_ = SrcEncoding;\
@@ -81,7 +81,7 @@ typedef enum I8080Flags
             IntoVariable = i8080ReadByte(i8080, READ_PAIR(H, L));\
             Cyc = CycMem;\
         } else {\
-            IntoVariable = i8080->R[sss_];\
+            IntoVariable = i8080->Reg.Idx[sss_];\
             Cyc = CycReg;\
         }\
     } while (0)
@@ -91,7 +91,7 @@ typedef enum I8080Flags
             i8080WriteByte(i8080, READ_PAIR(H, L), u8Data);\
             Cyc = CycMem;\
         } else {\
-            i8080->R[ddd_] = u8Data;\
+            i8080->Reg.Idx[ddd_] = u8Data;\
             Cyc = CycReg;\
         }\
     } while (0)
@@ -199,7 +199,7 @@ static void i8080ArithOp(Intel8080 *i8080, unsigned Op, unsigned Dst, unsigned S
     case 6: Dst |= Src; break;
     case 7: Dst -= Src; goto TestFlags;
     }
-    i8080->A = Dst & 0xFF;
+    i8080->Reg.Name.A = Dst & 0xFF;
 
 TestFlags:
     SET_FLAG(FLAG_C, Dst > 0xFF);
@@ -279,36 +279,36 @@ void I8080AdvanceClock(Intel8080 *i8080)
     } break;
     case 0x07: /* rlc: Rotate Left Carry */
     {
-        unsigned Sign = i8080->A >> 7;
-        i8080->A = (i8080->A << 1) | Sign;
+        unsigned Sign = i8080->Reg.Name.A >> 7;
+        i8080->Reg.Name.A = (i8080->Reg.Name.A << 1) | Sign;
         SET_FLAG(FLAG_C, Sign);
         CycleCount = 4;
     } break;
     case 0x0F: /* rrc: Rotate Right Carry */
     {
-        unsigned First = i8080->A & 1;
-        i8080->A = (i8080->A >> 1) | (First << 7);
+        unsigned First = i8080->Reg.Name.A & 1;
+        i8080->Reg.Name.A = (i8080->Reg.Name.A >> 1) | (First << 7);
         SET_FLAG(FLAG_C, First);
         CycleCount = 4;
     } break;
     case 0x17: /* ral: Rotate Accumulator Left */
     {
-        unsigned Sign = i8080->A >> 7;
-        i8080->A = (i8080->A << 1) | GET_FLAG(FLAG_C);
+        unsigned Sign = i8080->Reg.Name.A >> 7;
+        i8080->Reg.Name.A = (i8080->Reg.Name.A << 1) | GET_FLAG(FLAG_C);
         SET_FLAG(FLAG_C, Sign);
         CycleCount = 4;
     } break;
     case 0x1F: /* rar: Rotate Accumulator Right */ 
     {
-        unsigned First = i8080->A & 1;
-        i8080->A = (i8080->A >> 1) | (GET_FLAG(FLAG_C) << 7);
+        unsigned First = i8080->Reg.Name.A & 1;
+        i8080->Reg.Name.A = (i8080->Reg.Name.A >> 1) | (GET_FLAG(FLAG_C) << 7);
         SET_FLAG(FLAG_C, First);
         CycleCount = 4;
     } break;
     case 0x27: /* daa: Decimal Adjust Accumulator */ 
     {
         /* adjust low nibble */
-        unsigned LowNibble = i8080->A & 0xF;
+        unsigned LowNibble = i8080->Reg.Name.A & 0xF;
         if (LowNibble > 9 || GET_FLAG(FLAG_AC))
         {
             LowNibble += 6; /* turn a binary carry into a decimal carry */
@@ -316,7 +316,7 @@ void I8080AdvanceClock(Intel8080 *i8080)
         SET_FLAG(FLAG_AC, LowNibble >> 4);
 
         /* adjust high nibble */
-        unsigned HighNibble = (i8080->A & 0xF0) + (LowNibble & 0xF0);
+        unsigned HighNibble = (i8080->Reg.Name.A & 0xF0) + (LowNibble & 0xF0);
         if (HighNibble > 0x90 || GET_FLAG(FLAG_C))
         {
             HighNibble += 0x60; /* turn a binary carry into a decimal carry */
@@ -324,16 +324,16 @@ void I8080AdvanceClock(Intel8080 *i8080)
         SET_FLAG(FLAG_C, HighNibble >> 8);
 
         /* writeback */
-        i8080->A = HighNibble | (LowNibble & 0x0F);
-        SET_FLAG(FLAG_S, i8080->A >> 7);
-        SET_FLAG(FLAG_Z, i8080->A == 0);
-        SET_FLAG(FLAG_P, BitCount32(i8080->A) % 2 == 0);
+        i8080->Reg.Name.A = HighNibble | (LowNibble & 0x0F);
+        SET_FLAG(FLAG_S, i8080->Reg.Name.A >> 7);
+        SET_FLAG(FLAG_Z, i8080->Reg.Name.A == 0);
+        SET_FLAG(FLAG_P, BitCount32(i8080->Reg.Name.A) % 2 == 0);
 
         CycleCount = 4;
     } break;
     case 0x2F: /* cma: CoMpliment Accumulator */ 
     {
-        i8080->A = ~i8080->A;
+        i8080->Reg.Name.A = ~i8080->Reg.Name.A;
         CycleCount = 4;
     } break;
     case 0x3F: /* cmc: CoMpliment Carry */ 
@@ -373,8 +373,8 @@ void I8080AdvanceClock(Intel8080 *i8080)
     {
         /* this does not violate strict anti-alias bc D and H are uint8's */
         /* also endian does not matter since we're just copying data */
-        uint16_t *DE = (uint16_t *)&i8080->D;
-        uint16_t *HL = (uint16_t *)&i8080->H;
+        uint16_t *DE = (uint16_t *)&i8080->Reg.Name.D;
+        uint16_t *HL = (uint16_t *)&i8080->Reg.Name.H;
         uint16_t Tmp = *DE;
         *DE = *HL;
         *HL = Tmp;
@@ -399,13 +399,13 @@ void I8080AdvanceClock(Intel8080 *i8080)
     case 0xDB: /* in: load A from port */
     {
         uint8_t PortNumber = i8080FetchByte(i8080);
-        i8080->A = i8080->PortRead(i8080, PortNumber);
+        i8080->Reg.Name.A = i8080->PortRead(i8080, PortNumber);
         CycleCount = 10;
     } break;
     case 0xD3: /* out: store A to port */
     {
         uint8_t PortNumber = i8080FetchByte(i8080);
-        i8080->PortWrite(i8080, PortNumber, i8080->A);
+        i8080->PortWrite(i8080, PortNumber, i8080->Reg.Name.A);
         CycleCount = 10;
     } break;
 
@@ -425,13 +425,13 @@ void I8080AdvanceClock(Intel8080 *i8080)
     case 0x32: /* sta: STore Accumulator to memory */
     {
         uint16_t Address = i8080FetchWord(i8080);
-        i8080WriteByte(i8080, Address, i8080->A);
+        i8080WriteByte(i8080, Address, i8080->Reg.Name.A);
         CycleCount = 13;
     } break;
     case 0x3A: /* lda: LoaD Accumulator from memory */
     {
         uint16_t Address = i8080FetchWord(i8080);
-        i8080->A = i8080ReadByte(i8080, Address);
+        i8080->Reg.Name.A = i8080ReadByte(i8080, Address);
         CycleCount = 13;
     } break;
     case 0xC3: /* jmp: PC = Addr */
@@ -494,11 +494,11 @@ void I8080AdvanceClock(Intel8080 *i8080)
                 uint16_t Address = i8080ReadRegPair(i8080, RegPairIndex);
                 if (Opcode & 0x08) /* ldax: LoaD Accumulator indirect */
                 {
-                    i8080->A = i8080ReadByte(i8080, Address);
+                    i8080->Reg.Name.A = i8080ReadByte(i8080, Address);
                 }
                 else /* stax: STore Accumulator indirect */
                 {
-                    i8080WriteByte(i8080, Address, i8080->A);
+                    i8080WriteByte(i8080, Address, i8080->Reg.Name.A);
                 }
                 CycleCount = 7;
             } break;
@@ -527,9 +527,9 @@ void I8080AdvanceClock(Intel8080 *i8080)
                 }
                 else
                 {
-                    Data = i8080->R[DDD(Opcode)];
+                    Data = i8080->Reg.Idx[DDD(Opcode)];
                     Result = Data + i;
-                    i8080->R[DDD(Opcode)] = Result;
+                    i8080->Reg.Idx[DDD(Opcode)] = Result;
                     CycleCount = 5;
                 }
 
@@ -553,7 +553,7 @@ void I8080AdvanceClock(Intel8080 *i8080)
             READ_SRC(Byte, SSS(Opcode), 
                 CycleCount, 7, 4
             );
-            i8080ArithOp(i8080, DDD(Opcode), i8080->A, Byte);
+            i8080ArithOp(i8080, DDD(Opcode), i8080->Reg.Name.A, Byte);
         } break;
         case 3:
         {
@@ -574,7 +574,7 @@ void I8080AdvanceClock(Intel8080 *i8080)
                 if (0x3 == RegPairIndex) /* PSW */
                 {
                     uint16_t ProcessorStatusWord = i8080Pop(i8080);
-                    i8080->A = ProcessorStatusWord >> 8;
+                    i8080->Reg.Name.A = ProcessorStatusWord >> 8;
                     i8080->Status = ProcessorStatusWord & 0xFF;
                 }
                 else
@@ -613,7 +613,7 @@ void I8080AdvanceClock(Intel8080 *i8080)
                 if (0x3 == RegPairIndex) /* PSW */
                 {
                     uint16_t ProgramStatusWord = 
-                        ((uint16_t)i8080->A << 8)
+                        ((uint16_t)i8080->Reg.Name.A << 8)
                         | (i8080->Status & 0xFF);
                     i8080Push(i8080, ProgramStatusWord);
                 }
@@ -627,7 +627,7 @@ void I8080AdvanceClock(Intel8080 *i8080)
             case 06: /* 0b11ccc110: c: opcode for arith op */
             {
                 uint8_t Byte = i8080FetchByte(i8080);
-                i8080ArithOp(i8080, DDD(Opcode), i8080->A, Byte);
+                i8080ArithOp(i8080, DDD(Opcode), i8080->Reg.Name.A, Byte);
                 CycleCount = 7;
             } break;
             case 07: /* 0b11nnn111: RST n */
@@ -696,11 +696,11 @@ static uint8_t CPMReadFn(Intel8080 *i8080, uint16_t Address)
 {
     if (0x0005 == Address) /* CPM string output */
     {
-        switch (i8080->C)
+        switch (i8080->Reg.Name.C)
         {
         case 9: /* string output in DE */
         {
-            uint16_t Index = ((uint16_t)i8080->D << 8) | i8080->E;
+            uint16_t Index = ((uint16_t)i8080->Reg.Name.D << 8) | i8080->Reg.Name.E;
             const char *String = (const char *)&sBuffer[Index];
             int i = 0; 
             while (String[i] != '$')
@@ -711,7 +711,7 @@ static uint8_t CPMReadFn(Intel8080 *i8080, uint16_t Address)
         } break;
         case 2: /* char output in E */
         {
-            fputc(i8080->E, stdout);
+            fputc(i8080->Reg.Name.E, stdout);
         } break;
         }
     } 
@@ -730,6 +730,7 @@ static uint8_t CPMReadFn(Intel8080 *i8080, uint16_t Address)
 
 static void CPMWriteFn(Intel8080 *i8080, uint16_t Address, uint8_t Byte)
 {
+    (void)i8080;
     if (Address + 1u > sizeof sBuffer)
     {
         printf("Warning: invalid write at %04x\n", Address);
@@ -779,10 +780,10 @@ static void DumpStatus(const Intel8080 *i8080)
         "Data: %04x\n"
         "[SP=%04x]: %04x\n"
         "[PC=%04x]: %s\n", 
-        i8080->A, i8080->Status, Flag,
-        i8080->B, i8080->C,
-        i8080->D, i8080->E,
-        i8080->H, i8080->L, 
+        i8080->Reg.Name.A, i8080->Status, Flag,
+        i8080->Reg.Name.B, i8080->Reg.Name.C,
+        i8080->Reg.Name.D, i8080->Reg.Name.E,
+        i8080->Reg.Name.H, i8080->Reg.Name.L, 
         i8080->Data,
         i8080->SP, StackTop, 
         i8080->PC, Line
