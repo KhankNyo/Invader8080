@@ -44,6 +44,17 @@ static unsigned sWin32_SoundQueue_Size = 16;
 
 
 
+void *memset(void *Dst, int Val, size_t SizeBytes)
+{
+    uint8_t *DstPtr = Dst;
+    while (SizeBytes--)
+    {
+        *DstPtr++ = Val;
+    }
+    return Dst;
+}
+
+
 LRESULT CALLBACK Win32_WndProc(HWND Window, UINT Msg, WPARAM WParam, LPARAM LParam)
 {
     switch (Msg)

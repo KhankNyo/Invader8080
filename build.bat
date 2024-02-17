@@ -2,7 +2,7 @@
 
 
 set "INCARG=-I.\src\Include\ -I.\resources\"
-set "CC=gcc -Oz -Wall -Wpedantic -Wextra %INCARG%"
+set "CC=gcc -O2 -Wall -Wpedantic -Wextra %INCARG%"
 
 if "%1"=="clean" (
     if exist bin rmdir /q /s bin
@@ -17,8 +17,8 @@ if "%1"=="clean" (
     %CC% -DSTANDALONE -o bin\Disassembler.exe src\Disassembler.c
     %CC% -DSTANDALONE -o bin\8080.exe src\8080.c
     %CC% -DPLATFORM_WIN32 ^
-        -nostdlib -nostartfiles -municode ^
-        -o bin\Win32.exe ^
+        -fno-builtin -nostdlib -nostartfiles -municode ^
+        -o bin\Invader.exe ^
         src\Win32.c ^
         resources\Resources.c ^
         -Wl,-ewWinMain,--subsystem=windows^
