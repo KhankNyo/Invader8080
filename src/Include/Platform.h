@@ -32,6 +32,7 @@ void Platform_PrintError(const char *ErrorMessage);
 void Platform_Sleep(unsigned Millisec);
 
 
+void Invader_Setup(void);
 void Invader_Loop(void);
 void Invader_OnKeyDown(PlatformKey Key);
 void Invader_OnKeyUp(PlatformKey Key);
