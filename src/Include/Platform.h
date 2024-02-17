@@ -29,7 +29,6 @@ void Platform_WriteToSoundDevice(const void *SoundBuffer, size_t SoundBufferSize
 
 void Platform_FatalError(const char *ErrorMessage);
 void Platform_PrintError(const char *ErrorMessage);
-void Platform_Exit(int ExitCode);
 void Platform_Sleep(unsigned Millisec);
 
 

@@ -1,7 +1,8 @@
-
 #include <windows.h>
 #include "Invaders.c"
 #include "Platform.h"
+
+
 
 
 #define METHOD_CALL(pObj, Meth) (pObj)->lpVtbl->Meth
@@ -11,10 +12,20 @@
 #define SOUND_QUEUE_INITVAL 255
 
 
-static PlatformBackBuffer sWin32_BackBuffer = { 0 };
 
-static HWND sMainWindow;
-static WAVEFORMATEX sDefaultAudioFormat = {
+
+static HWND sWin32_MainWindow;
+static PlatformBackBuffer sWin32_BackBuffer = { 0 };
+static BITMAPINFO sWin32_BackBuffer_Bitmap = {
+    .bmiHeader.biSize = sizeof(sWin32_BackBuffer_Bitmap.bmiHeader),
+    .bmiHeader.biWidth = 0,
+    .bmiHeader.biHeight = 0, 
+    .bmiHeader.biPlanes = 1,
+    .bmiHeader.biBitCount = 32,
+    .bmiHeader.biCompression = BI_RGB,
+};
+
+static WAVEFORMATEX sWin32_DefaultAudioFormat = {
     .nChannels = 2,     /* stereo */
     .wFormatTag = WAVE_FORMAT_PCM,
     .wBitsPerSample = 16,
@@ -22,20 +33,15 @@ static WAVEFORMATEX sDefaultAudioFormat = {
     .nSamplesPerSec = 44100,
     .nAvgBytesPerSec = 44100 * (2 * sizeof(int16_t)), 
 };
-static BITMAPINFO sBitmapInfo = {
-    .bmiHeader.biSize = sizeof(sBitmapInfo.bmiHeader),
-    .bmiHeader.biWidth = 0,
-    .bmiHeader.biHeight = 0, 
-    .bmiHeader.biPlanes = 1,
-    .bmiHeader.biBitCount = 32,
-    .bmiHeader.biCompression = BI_RGB,
-};
-static HWAVEOUT sSoundDevice;
-static Bool8 sSoundDeviceIsReady;
-static WAVEHDR sBlocks[256] = { 0 };
-static uint8_t sTail = SOUND_QUEUE_INITVAL;
-static uint8_t sHead = SOUND_QUEUE_INITVAL;
-static unsigned sQueueSize = 16;
+static HWAVEOUT sWin32_SoundDevice;
+static Bool8 sWin32_SoundDeviceIsReady;
+
+static WAVEHDR sWin32_SoundQueue[256] = { 0 };
+static uint8_t sWin32_SoundQueue_Tail = SOUND_QUEUE_INITVAL;
+static uint8_t sWin32_SoundQueue_Head = SOUND_QUEUE_INITVAL;
+static unsigned sWin32_SoundQueue_Size = 16;
+
+
 
 
 LRESULT CALLBACK Win32_WndProc(HWND Window, UINT Msg, WPARAM WParam, LPARAM LParam)
@@ -67,24 +73,21 @@ LRESULT CALLBACK Win32_WndProc(HWND Window, UINT Msg, WPARAM WParam, LPARAM LPar
     return 0;
 }
 
-
 static void Win32_WriteWaveHeaderToSoundDevice(WAVEHDR *Header)
 {
     if (Header->dwFlags & WHDR_PREPARED)
-        waveOutUnprepareHeader(sSoundDevice, Header, sizeof *Header);
-    waveOutPrepareHeader(sSoundDevice, Header, sizeof *Header);
-    waveOutWrite(sSoundDevice, Header, sizeof *Header);
+        waveOutUnprepareHeader(sWin32_SoundDevice, Header, sizeof *Header);
+    waveOutPrepareHeader(sWin32_SoundDevice, Header, sizeof *Header);
+    waveOutWrite(sWin32_SoundDevice, Header, sizeof *Header);
 }
-
 
 static unsigned Win32_SoundDeviceQueueSize(void)
 {
-    int Val = sTail - sHead;
-    if (sHead > sTail)
-        Val += STATIC_ARRAY_SIZE(sBlocks);
+    int Val = sWin32_SoundQueue_Tail - sWin32_SoundQueue_Head;
+    if (sWin32_SoundQueue_Head > sWin32_SoundQueue_Tail)
+        Val += STATIC_ARRAY_SIZE(sWin32_SoundQueue);
     return (unsigned)ABS(Val);
 }
-
 
 static void Win32_WaveOutCallback(
     HWAVEOUT WaveOut, 
@@ -98,52 +101,24 @@ static void Win32_WaveOutCallback(
         return;
 
     unsigned QueueSize = Win32_SoundDeviceQueueSize();
-    if (QueueSize < sQueueSize)
+    if (QueueSize < sWin32_SoundQueue_Size)
     {
-        sSoundDeviceIsReady = true;
+        sWin32_SoundDeviceIsReady = true;
         if (QueueSize == 0)
         {
-            sTail = SOUND_QUEUE_INITVAL;
-            sHead = SOUND_QUEUE_INITVAL;
+            sWin32_SoundQueue_Tail = SOUND_QUEUE_INITVAL;
+            sWin32_SoundQueue_Head = SOUND_QUEUE_INITVAL;
         }
-        else sTail--;
+        else sWin32_SoundQueue_Tail--;
     }
     else
     {
-        sSoundDeviceIsReady = false;
-        sTail--;
-        uint8_t Index = sTail - sQueueSize;
-        Win32_WriteWaveHeaderToSoundDevice(&sBlocks[Index]);
+        sWin32_SoundDeviceIsReady = false;
+        sWin32_SoundQueue_Tail--;
+        uint8_t Index = sWin32_SoundQueue_Tail - sWin32_SoundQueue_Size;
+        Win32_WriteWaveHeaderToSoundDevice(&sWin32_SoundQueue[Index]);
     }
 }
-
-Bool8 Platform_SoundDeviceIsReady(void)
-{
-    return sSoundDeviceIsReady;
-}
-
-void Platform_WriteToSoundDevice(const void *SoundBuffer, size_t SoundBufferSize)
-{
-    if (sHead == sTail)
-    {
-        sHead = SOUND_QUEUE_INITVAL;
-        sTail = SOUND_QUEUE_INITVAL;
-    }
-
-    /* push the new block into the queue */
-    WAVEHDR *NewBlock = &sBlocks[sHead--];
-    *NewBlock = (WAVEHDR){
-        .lpData = (LPSTR)SoundBuffer,
-        .dwBufferLength = SoundBufferSize,
-    };
-
-    if (Win32_SoundDeviceQueueSize() < sQueueSize)
-    {
-        Win32_WriteWaveHeaderToSoundDevice(NewBlock);
-    }
-    else sSoundDeviceIsReady = false; 
-}
-
 
 static Bool8 Win32_PollInputs(void)
 {
@@ -175,7 +150,7 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWCHAR CmdLine, 
     };
     RegisterClassExW(&WindowClass);
 
-    sMainWindow = CreateWindowExW(
+    sWin32_MainWindow = CreateWindowExW(
         WS_EX_CLIENTEDGE,
         WindowClass.lpszClassName,
         L"Space Invader",
@@ -185,29 +160,29 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWCHAR CmdLine, 
         1080, 720,
         NULL, NULL, NULL, NULL
     );
-    if (NULL == sMainWindow)
+    if (NULL == sWin32_MainWindow)
     {
         Platform_FatalError("Cannot create window");
     }
-    ShowWindow(sMainWindow, SW_SHOW);
+    ShowWindow(sWin32_MainWindow, SW_SHOW);
     /*
      * gcc didn't link correctly or something??? 
      * uncomment resulting in a bunch of NULLs on the stack 
      * so I couldn't view the backtrace either.
      * Works fine with tcc????
      *
-     * UpdateWindow(sMainWindow);
+     * UpdateWindow(sWin32_MainWindow);
      * */
 
-    sSoundDeviceIsReady = MMSYSERR_NOERROR == waveOutOpen(
-        &sSoundDevice, 
+    sWin32_SoundDeviceIsReady = MMSYSERR_NOERROR == waveOutOpen(
+        &sWin32_SoundDevice, 
         WAVE_MAPPER, 
-        &sDefaultAudioFormat, 
+        &sWin32_DefaultAudioFormat, 
         (DWORD_PTR)&Win32_WaveOutCallback, 
         0, 
         CALLBACK_FUNCTION
     );
-    if (!sSoundDeviceIsReady)
+    if (!sWin32_SoundDeviceIsReady)
     {
         Platform_PrintError("Unable to play sound (waveOutOpen failed).");
     }
@@ -220,6 +195,7 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWCHAR CmdLine, 
     /* dont't need to cleanup the windows, Windows does it for us */
     ExitProcess(0);
 }
+
 
 
 
@@ -269,14 +245,13 @@ PlatformBackBuffer Platform_GetBackBuffer(void)
     return sWin32_BackBuffer;
 }
 
-
 void Platform_SwapBuffer(const PlatformBackBuffer *BackBuffer)
 {
     /* force Windows to redraw the window */
-    InvalidateRect(sMainWindow, NULL, FALSE);
+    InvalidateRect(sWin32_MainWindow, NULL, FALSE);
 
     PAINTSTRUCT PaintStruct;
-    HDC DeviceContext = BeginPaint(sMainWindow, &PaintStruct);
+    HDC DeviceContext = BeginPaint(sWin32_MainWindow, &PaintStruct);
     RECT Rect = PaintStruct.rcPaint;
 
     int DstX = Rect.left, 
@@ -301,27 +276,46 @@ void Platform_SwapBuffer(const PlatformBackBuffer *BackBuffer)
         DstY = DstY + Middle - DstH/2;
     }
 
-    sBitmapInfo.bmiHeader.biWidth = BackBuffer->Width;
-    sBitmapInfo.bmiHeader.biHeight = -BackBuffer->Height; /* reverse, buffer going from top to bottom */
+    sWin32_BackBuffer_Bitmap.bmiHeader.biWidth = BackBuffer->Width;
+    sWin32_BackBuffer_Bitmap.bmiHeader.biHeight = -BackBuffer->Height; /* reverse, going from top to bottom */
     StretchDIBits(DeviceContext, 
         DstX, DstY, DstW, DstH, 
         0, 0, BackBuffer->Width, BackBuffer->Height, 
-        BackBuffer->Data, &sBitmapInfo, 
+        BackBuffer->Data, &sWin32_BackBuffer_Bitmap, 
         DIB_RGB_COLORS, SRCCOPY
     );
 
-    EndPaint(sMainWindow, &PaintStruct);
+    EndPaint(sWin32_MainWindow, &PaintStruct);
 }
 
 
-
-
-
-
-void Platform_Exit(int ExitCode)
+Bool8 Platform_SoundDeviceIsReady(void)
 {
-    ExitProcess(ExitCode);
+    return sWin32_SoundDeviceIsReady;
 }
+
+void Platform_WriteToSoundDevice(const void *SoundBuffer, size_t SoundBufferSize)
+{
+    if (sWin32_SoundQueue_Head == sWin32_SoundQueue_Tail)
+    {
+        sWin32_SoundQueue_Head = SOUND_QUEUE_INITVAL;
+        sWin32_SoundQueue_Tail = SOUND_QUEUE_INITVAL;
+    }
+
+    /* push the new block into the queue */
+    WAVEHDR *NewBlock = &sWin32_SoundQueue[sWin32_SoundQueue_Head--];
+    *NewBlock = (WAVEHDR){
+        .lpData = (LPSTR)SoundBuffer,
+        .dwBufferLength = SoundBufferSize,
+    };
+
+    if (Win32_SoundDeviceQueueSize() < sWin32_SoundQueue_Size)
+    {
+        Win32_WriteWaveHeaderToSoundDevice(NewBlock);
+    }
+    else sWin32_SoundDeviceIsReady = false; 
+}
+
 
 void Platform_FatalError(const char *ErrorMessage)
 {

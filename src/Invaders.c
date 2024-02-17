@@ -1,8 +1,9 @@
-
-
 #ifdef STANDALONE
 #  error "Invaders.c cannot be compiled as a standalone file, it should be included in the platform files."
 #endif /* STANDALONE */
+
+
+
 
 #include "Resources.h"
 #include "Platform.h"
@@ -41,6 +42,9 @@ typedef struct PortHardware
             Player2;
 } PortHardware;
 
+
+
+
 #define WHITE 0x00FFFFFFul
 #define BLACK 0x00000000ul
 #define GREEN_MASK 0x0000FF00ul
@@ -58,7 +62,6 @@ static int16_t sSoundBuffer[16][200 * 1024];
 static uint32_t sSoundBufferSizeBytes;
 static const uint8_t *sLoopingSound;
 static uint32_t sLoopingSoundSizeBytes;
-
 
 
 
@@ -100,7 +103,6 @@ static void MemWriteByte(Intel8080 *i8080, uint16_t Address, uint8_t Byte)
     }
 }
 
-
 static uint8_t PortReadByte(Intel8080 *i8080, uint16_t Port)
 {
     (void)i8080;
@@ -124,8 +126,6 @@ static void MemoryCopy(void *Dst, const void *Src, size_t SizeBytes)
         *DstPtr++ = *SrcPtr++;
     }
 }
-
-
 
 static void PushSound(const uint8_t *SoundDataBytes, size_t SoundDataSizeBytes)
 {
@@ -159,7 +159,6 @@ static void PushSound(const uint8_t *SoundDataBytes, size_t SoundDataSizeBytes)
 #undef MIN
 }
 
-
 /* submits sound buffer to the sound device, also adds the looping sound */
 static void SubmitSound(void)
 {
@@ -192,7 +191,6 @@ static void SubmitSound(void)
     }
     sSoundBufferSizeBytes = 0;
 }
-
 
 static void PortWriteByte(Intel8080 *i8080, uint16_t Port, uint8_t Byte)
 {
@@ -265,6 +263,7 @@ static void PortWriteByte(Intel8080 *i8080, uint16_t Port, uint8_t Byte)
 
 
 
+
 void Invader_OnKeyUp(PlatformKey Key)
 {
     switch ((int)Key)
@@ -306,7 +305,6 @@ void Invader_OnKeyDown(PlatformKey Key)
     }
 }
 
-
 void Invader_Setup(void)
 {
     if (gSpaceInvadersRomSize != 0x2000)
@@ -322,7 +320,6 @@ void Invader_Setup(void)
 
     Platform_SetBackBufferDimension(224, 256);
 }
-
 
 void Invader_Loop(void)
 {
