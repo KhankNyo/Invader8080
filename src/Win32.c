@@ -12,6 +12,7 @@
 #define SOUND_QUEUE_INITVAL 255
 
 
+
 typedef struct PlatformCriticalSection 
 {
     CRITICAL_SECTION Sect;
@@ -52,6 +53,24 @@ static double sWin32_TimerFrequency;
 
 
 
+/* MSVC Bullshit */
+#ifdef _MSC_VER
+int _fltused = 0;
+
+void __GSHandlerCheck(void)
+{
+}
+
+void __security_check_cookie(uintptr_t i) {(void)i;}
+uintptr_t __security_cookie;
+
+void __stdcall wWinMainCRTStartup(void)
+{
+    ExitProcess(wWinMain(GetModuleHandleW(NULL), 0, 0, 0));
+}
+
+#pragma function(memset)
+#endif /* _MSC_VER */
 void *memset(void *Dst, int Val, size_t SizeBytes)
 {
     uint8_t *DstPtr = Dst;
@@ -522,8 +541,10 @@ PlatformCriticalSection *Platform_CreateCriticalSection(void)
     /* TODO: not do this? */
     static PlatformCriticalSection Crit[256];
     static unsigned CritCount = 0;
-    InitializeCriticalSection(&Crit[CritCount++ % STATIC_ARRAY_SIZE(Crit)].Sect);
-    return &Crit[CritCount % STATIC_ARRAY_SIZE(Crit)];
+
+    PlatformCriticalSection *C = &Crit[CritCount++ % STATIC_ARRAY_SIZE(Crit)];
+    InitializeCriticalSection(&C->Sect);
+    return C;
 }
 
 void Platform_EnterCriticalSection(PlatformCriticalSection *Crit)
