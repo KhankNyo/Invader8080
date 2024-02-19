@@ -57,12 +57,7 @@ static Intel8080 sI8080 = { 0 };
 static uint8_t sRam[0x2400 - 0x2000];
 static uint8_t sVideoMemory[0x4000 - 0x2400];
 
-static uint8_t sCurrentSoundBuffer;
-static int16_t sSoundBuffer[16][200 * 1024];
-static uint32_t sSoundBufferSizeBytes;
-static const uint8_t *sLoopingSound;
-static uint32_t sLoopingSoundSizeBytes;
-
+static Bool8 sHasSound;
 
 
 
@@ -304,7 +299,7 @@ void Invader_OnKeyDown(PlatformKey Key)
     }
 }
 
-void Invader_Setup(void)
+void Invader_Setup(PlatformAudioFormat *AudioFormat)
 {
     if (gSpaceInvadersRomSize != 0x2000)
     {
@@ -317,8 +312,23 @@ void Invader_Setup(void)
     );
     sHardware.Player2 = 0x03; /* 6 ships */
 
+
     Platform_SetBackBufferDimension(224, 256);
+
+    sHasSound = true;
+    AudioFormat->ShouldHaveSound = true;
+    AudioFormat->SampleRate = 44100;    /* the resources' sample rate */
+    AudioFormat->ChannelCount = 2;      /* TODO: are the wave files in the resources folder mono or stereo? */
+    AudioFormat->QueueSize = 8;         /* magic */
+    AudioFormat->BufferSizeBytes = 512; /* magic */
 }
+
+void Invader_OnAudioInitializationFailed(const char *ErrorMessage)
+{
+    Platform_PrintError(ErrroMessage);
+    sHasSound = false;
+}
+
 
 void Invader_Loop(void)
 {
@@ -378,5 +388,9 @@ void Invader_Loop(void)
 
         Cycles = 0;
     }
+}
+
+void Invader_AtExit(void)
+{
 }
 

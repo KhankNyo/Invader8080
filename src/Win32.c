@@ -12,6 +12,18 @@
 #define SOUND_QUEUE_INITVAL 255
 
 
+typedef struct PlatformCriticalSection 
+{
+    CRITICAL_SECTION Sect;
+} PlatfromCriticalSection;
+
+typedef struct Win32_SoundThreadData 
+{
+    PlatformAudioFormat AudioFormat;
+    uint8_t *Buffers;
+    WAVEHDR *Headers;
+} Win32_SoundThreadData;
+
 
 
 static HWND sWin32_MainWindow;
@@ -25,21 +37,17 @@ static BITMAPINFO sWin32_BackBuffer_Bitmap = {
     .bmiHeader.biCompression = BI_RGB,
 };
 
-static WAVEFORMATEX sWin32_DefaultAudioFormat = {
-    .nChannels = 2,     /* stereo */
-    .wFormatTag = WAVE_FORMAT_PCM,
-    .wBitsPerSample = 16,
-    .nBlockAlign = 2 * sizeof(int16_t),
-    .nSamplesPerSec = 44100,
-    .nAvgBytesPerSec = 44100 * (2 * sizeof(int16_t)), 
-};
+static WAVEFORMATEX sWin32_AudioFormat;
 static HWAVEOUT sWin32_SoundDevice;
-static Bool8 sWin32_SoundDeviceIsReady;
+static HANDLE sWin32_SoundThread_Handle = INVALID_HANDLE_VALUE;
+static PLATFORM_ATOMIC Bool8 saWin32_SoundThread_ShouldQuit;
+static PLATFORM_ATOMIC Bool8 saWin32_SoundDevice_IsReady;
 
-static WAVEHDR sWin32_SoundQueue[256] = { 0 };
-static uint8_t sWin32_SoundQueue_Tail = SOUND_QUEUE_INITVAL;
-static uint8_t sWin32_SoundQueue_Head = SOUND_QUEUE_INITVAL;
-static unsigned sWin32_SoundQueue_Size = 16;
+static PlatformCriticalSection sWin32_SoundQueue_CriticalSection;
+static uint32_t sWin32_SoundQueue_Capacity; /* is set right after Invader_Setup and constant from then on */
+static PLATFORM_ATOMIC uint32_t saWin32_SoundQueue_Size;
+static uint32_t sWin32_SoundQueue_BufferSizeBytes;
+static uint8_t *sWin32_SoundQueue_Arena;
 
 
 
@@ -84,21 +92,6 @@ LRESULT CALLBACK Win32_WndProc(HWND Window, UINT Msg, WPARAM WParam, LPARAM LPar
     return 0;
 }
 
-static void Win32_WriteWaveHeaderToSoundDevice(WAVEHDR *Header)
-{
-    if (Header->dwFlags & WHDR_PREPARED)
-        waveOutUnprepareHeader(sWin32_SoundDevice, Header, sizeof *Header);
-    waveOutPrepareHeader(sWin32_SoundDevice, Header, sizeof *Header);
-    waveOutWrite(sWin32_SoundDevice, Header, sizeof *Header);
-}
-
-static unsigned Win32_SoundDeviceQueueSize(void)
-{
-    int Val = sWin32_SoundQueue_Tail - sWin32_SoundQueue_Head;
-    if (sWin32_SoundQueue_Head > sWin32_SoundQueue_Tail)
-        Val += STATIC_ARRAY_SIZE(sWin32_SoundQueue);
-    return (unsigned)ABS(Val);
-}
 
 static void Win32_WaveOutCallback(
     HWAVEOUT WaveOut, 
@@ -111,24 +104,221 @@ static void Win32_WaveOutCallback(
     if (WOM_DONE != Msg)
         return;
 
-    unsigned QueueSize = Win32_SoundDeviceQueueSize();
-    if (QueueSize < sWin32_SoundQueue_Size)
+    PLATFORM_ATOMIC_START(&sWin32_SoundQueue_CriticalSection);
     {
-        sWin32_SoundDeviceIsReady = true;
-        if (QueueSize == 0)
+        saWin32_SoundQueue_Size++;
+        saWin32_SoundDevice_IsReady = true;
+    }
+    PLATFORM_ATOMIC_END(&sWin32_SoundQueue_CriticalSection);
+}
+
+
+/* TODO: this code looks very portable, 
+ * consider moving this to Invader.c */
+static DWORD WINAPI Win32_SoundThreadRoutine(void *UserData)
+{
+    Win32_SoundThreadData *Data = UserData;
+    unsigned QueueIndex = 0;
+    double CurrentTime = 0;
+    double TimeStep = 1.0 / (double)Data->AudioFormat.SampleRate;
+
+    volatile Bool8 SoundThreadShouldQuit;
+    volatile uint32_t SoundQueueSize;
+    while (1)
+    {
+        PLATFORM_ATOMIC_RMW(
+            &sWin32_SoundQueue_CriticalSection, 
+            SoundQueueSize = saWin32_SoundQueue_Size 
+        );
+        if (SoundQueueSize == 0)
         {
-            sWin32_SoundQueue_Tail = SOUND_QUEUE_INITVAL;
-            sWin32_SoundQueue_Head = SOUND_QUEUE_INITVAL;
+            volatile Bool8 SoundDeviceIsReady;
+            do {
+                /* TODO: use cond var or add sleep */
+                PLATFORM_ATOMIC_START(&sWin32_SoundQueue_CriticalSection);
+                {
+                    SoundDeviceIsReady = saWin32_SoundDevice_IsReady;
+                    SoundThreadShouldQuit = saWin32_SoundThread_ShouldQuit;
+                }
+                PLATFORM_ATOMIC_END(&sWin32_SoundQueue_CriticalSection);
+            } while (!SoundDeviceIsReady && !SoundThreadShouldQuit);
         }
-        else sWin32_SoundQueue_Tail--;
+        PLATFORM_ATOMIC_START(&sWin32_SoundQueue_CriticalSection);
+        {
+            saWin32_SoundDevice_IsReady = false;
+            saWin32_SoundQueue_Size--;
+            SoundThreadShouldQuit = saWin32_SoundThread_ShouldQuit;
+        }
+        PLATFORM_ATOMIC_END(&sWin32_SoundQueue_CriticalSection);
+
+
+        /* exit if this thread was signaled to do so */
+        if (SoundThreadShouldQuit)
+            break;
+
+
+        /* variables to ease typing */
+        int16_t *CurrentBuffer = (int16_t *)&Data->Buffers[
+            QueueIndex * sWin32_SoundQueue_BufferSizeBytes
+        ];
+        WAVEHDR *CurrentHeader = &Data->Headers[QueueIndex];
+
+        /* copy sound to buffer */
+        for (uint32_t i = 0; 
+            i < sWin32_SoundQueue_BufferSizeBytes / sizeof(int16_t); 
+            i += Data->AudioFormat.ChannelCount)
+        {
+            int16_t SoundSample = Invader_OnSoundThreadRequestingSample(CurrentTime, TimeStep);
+            for (uint32_t Channel = 0; 
+                Channel < Data->AudioFormat.ChannelCount; 
+                Channel++)
+            {
+                CurrentBuffer[i + Channel] = SoundSample;
+            }
+            CurrentTime += TimeStep;
+        }
+
+        /* send the sound buffer to waveOut */
+        CurrentHeader->lpData = (LPSTR)CurrentBuffer;
+        CurrentHeader->dwBufferLength = sWin32_SoundQueue_BufferSizeBytes;
+        if (CurrentHeader->dwFlags & WHDR_PREPARED)
+        {
+            waveOutUnprepareHeader(sWin32_SoundDevice, CurrentHeader, sizeof *CurrentHeader);
+        }
+        waveOutPrepareHeader(sWin32_SoundDevice, CurrentHeader, sizeof *CurrentHeader);
+        waveOutWrite(sWin32_SoundDevice, CurrentHeader, sizeof *CurrentHeader);
+
+
+        /* update */
+        QueueIndex++;
+        /* the capacity of the sound queue should not be changing during the game loop,
+         * TODO: assert this */
+        QueueIndex %= sWin32_SoundQueue_Capacity; 
     }
-    else
+    return 0;
+}
+
+/* returns error message, or null if there were no error */
+static const char *Win32_InitializeAudio(Win32_SoundThreadData *SoundThreadData)
+{
+    const char *ErrorMessage = NULL;
+
+
+    /* set audio format */
+    PlatformAudioFormat AudioFormat = SoundThreadData->AudioFormat;
+    sWin32_AudioFormat = (WAVEFORMATEX) {
+        .nChannels = AudioFormat.ChannelCount,
+        .wBitsPerSample = 16,
+        .nBlockAlign = sizeof(int16_t) * AudioFormat.ChannelCount,
+        .wFormatTag = WAVE_FORMAT_PCM,
+        .nSamplesPerSec = AudioFormat.SampleRate,
+        .nAvgBytesPerSec = 
+            sizeof(int16_t) 
+            * AudioFormat.ChannelCount 
+            * AudioFormat.SampleRate,
+    };
+
+
+    /* init audio device */
+    MMRESULT WaveOutErrorCode = waveOutOpen(
+        &sWin32_SoundDevice, 
+        WAVE_MAPPER, 
+        &sWin32_AudioFormat, 
+        (DWORD_PTR)&Win32_WaveOutCallback, 
+        0, 
+        CALLBACK_FUNCTION
+    );
+    saWin32_SoundDevice_IsReady = MMSYSERR_NOERROR == WaveOutErrorCode;
+    if (!saWin32_SoundDevice_IsReady)
     {
-        sWin32_SoundDeviceIsReady = false;
-        sWin32_SoundQueue_Tail--;
-        uint8_t Index = sWin32_SoundQueue_Tail - sWin32_SoundQueue_Size;
-        Win32_WriteWaveHeaderToSoundDevice(&sWin32_SoundQueue[Index]);
+        static char ErrorBuffer[MAXERRORLENGTH];
+        waveOutGetErrorTextA(WaveOutErrorCode, ErrorBuffer, STATIC_ARRAY_SIZE(ErrorBuffer));
+        ErrorMessage = ErrorBuffer;
+        goto WaveOutError;
     }
+
+
+    /* create a critical section for the sound thread */
+    sWin32_SoundQueue_CriticalSection = Platform_CreateCriticalSection();
+    saWin32_SoundThread_ShouldQuit = false;
+
+
+    /* allocate sound thread data */
+    uint32_t SoundBufferSizeBytes = AudioFormat.QueueSize * AudioFormat.BufferSizeBytes;
+    uint32_t SoundHeaderSizeBytes = AudioFormat.QueueSize * sizeof(WAVEHDR);
+    sWin32_SoundQueue_Arena = VirtualAlloc(
+        NULL, 
+        SoundBufferSizeBytes + SoundHeaderSizeBytes, 
+        MEM_COMMIT, 
+        PAGE_READWRITE
+    );
+    if (NULL == sWin32_SoundQueue_Arena)
+    {
+        ErrorMessage = "Out of memory.";
+        goto AllocError;
+    }
+
+
+    /* create the sound thread */
+    SoundThreadData->Buffers = sWin32_SoundQueue_Arena + 0;
+    SoundThreadData->Headers = (WAVEHDR *)(sWin32_SoundQueue_Arena + SoundBufferSizeBytes);
+    DWORD ThreadID;
+    sWin32_SoundThread_Handle = CreateThread(
+        NULL, 
+        0, 
+        Win32_SoundThreadRoutine, 
+        &SoundThreadData, 
+        0, 
+        &ThreadID
+    );
+    if (INVALID_HANDLE_VALUE == sWin32_SoundThread_Handle)
+    {
+        ErrorMessage = "Unable to create audio thread.";
+        goto ThreadError;
+    }
+
+
+    /* no error */
+    return NULL;
+
+
+ThreadError:
+    /* don't want a buffer lingering around while the game is running */
+    VirtualFree(sWin32_SoundQueue_Arena, 0, MEM_RELEASE);
+AllocError:
+WaveOutError:
+    saWin32_SoundDevice_IsReady = false;
+    saWin32_SoundThread_ShouldQuit = true;
+    return ErrorMessage;
+}
+
+static void Win32_DestroyAudio(Win32_SoundThreadData *SoundThreadData)
+{
+    /* signal the sound thread to stop */
+    PLATFORM_ATOMIC_RMW(
+        &sWin32_SoundQueue_CriticalSection,
+        saWin32_SoundThread_ShouldQuit = true
+    );
+    /* don't care about return value here since we're exiting anyway */
+    (void)WaitForSingleObject(sWin32_SoundThread_Handle, INFINITE);
+
+    /* close the sound thread handle */
+    if (INVALID_HANDLE_VALUE != sWin32_SoundThread_Handle)
+    {
+        CloseHandle(sWin32_SoundThread_Handle);
+    }
+
+    /* destroy critical section */
+    Platform_DestroyCriticalSection(&sWin32_SoundQueue_CriticalSection);
+    
+    /* close audio device (waveOut) */
+    waveOutClose(sWin32_SoundDevice);
+
+    /* we don't care about the sound arena because 
+     * it will get cleaned up by Windows anyway */
+    (void)sWin32_SoundQueue_Arena;
+    (void)SoundThreadData->Buffers;
+    (void)SoundThreadData->Headers;
 }
 
 static Bool8 Win32_PollInputs(void)
@@ -149,7 +339,6 @@ static Bool8 Win32_PollInputs(void)
 int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWCHAR CmdLine, int CmdShow)
 {
     (void)PrevInstance, (void)CmdLine, (void)CmdShow;
-
     WNDCLASSEXW WindowClass = {
         .style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC,
         .cbSize = sizeof WindowClass,
@@ -185,25 +374,29 @@ int WINAPI wWinMain(HINSTANCE Instance, HINSTANCE PrevInstance, PWCHAR CmdLine, 
      * UpdateWindow(sWin32_MainWindow);
      * */
 
-    sWin32_SoundDeviceIsReady = MMSYSERR_NOERROR == waveOutOpen(
-        &sWin32_SoundDevice, 
-        WAVE_MAPPER, 
-        &sWin32_DefaultAudioFormat, 
-        (DWORD_PTR)&Win32_WaveOutCallback, 
-        0, 
-        CALLBACK_FUNCTION
-    );
-    if (!sWin32_SoundDeviceIsReady)
+    Win32_SoundThreadData SoundThreadData = { 0 };
+    Invader_Setup(&SoundThreadData.AudioFormat);
+    if (SoundThreadData.AudioFormat.ShouldHaveSound)
     {
-        Platform_PrintError("Unable to play sound (waveOutOpen failed).");
+        Win32_InitializeAudio(&SoundThreadData);
     }
-
-    Invader_Setup();
     while (Win32_PollInputs())
     {
         Invader_Loop();
     }
-    /* dont't need to cleanup the windows, Windows does it for us */
+    Invader_AtExit();
+
+    /* dont't need to cleanup the window, 
+     * Windows does it for us */
+    (void)sWin32_MainWindow;
+
+    /* but we do need to clean up audio ourselves because it
+     * has handles to actual hardware */
+    if (SoundThreadData.AudioFormat.ShouldHaveSound)
+    {
+        Win32_DestroyAudio(&SoundThreadData);
+    }
+    
     ExitProcess(0);
 }
 
@@ -300,31 +493,26 @@ void Platform_SwapBuffer(const PlatformBackBuffer *BackBuffer)
 }
 
 
-Bool8 Platform_SoundDeviceIsReady(void)
+PlatformCriticalSection Platform_CreateCriticalSection(void)
 {
-    return sWin32_SoundDeviceIsReady;
+    PlatformCriticalSection Crit;
+    InitializeCriticalSection(&Crit.Sect);
+    return Crit;
 }
 
-void Platform_WriteToSoundDevice(const void *SoundBuffer, size_t SoundBufferSize)
+void Platform_EnterCriticalSection(PlatformCriticalSection *Crit)
 {
-    if (sWin32_SoundQueue_Head == sWin32_SoundQueue_Tail)
-    {
-        sWin32_SoundQueue_Head = SOUND_QUEUE_INITVAL;
-        sWin32_SoundQueue_Tail = SOUND_QUEUE_INITVAL;
-    }
+    EnterCriticalSection(&Crit->Sect);
+}
 
-    /* push the new block into the queue */
-    WAVEHDR *NewBlock = &sWin32_SoundQueue[sWin32_SoundQueue_Head--];
-    *NewBlock = (WAVEHDR){
-        .lpData = (LPSTR)SoundBuffer,
-        .dwBufferLength = SoundBufferSize,
-    };
+void Platform_LeaveCriticalSection(PlatformCriticalSection *Crit)
+{
+    LeaveCriticalSection(&Crit->Sect);
+}
 
-    if (Win32_SoundDeviceQueueSize() < sWin32_SoundQueue_Size)
-    {
-        Win32_WriteWaveHeaderToSoundDevice(NewBlock);
-    }
-    else sWin32_SoundDeviceIsReady = false; 
+void Platform_DestroyCriticalSection(PlatformCriticalSection *Crit)
+{
+    DeleteCriticalSection(&Crit->Sect);
 }
 
 

@@ -2,7 +2,7 @@
 #define INVADER_WIN32_H
 
 
-typedef enum PlatformKey 
+enum PlatformKey 
 {
     KEY_LEFT = 0x25,        /* VK_LEFT */
     KEY_RIGHT = 0x27,       /* VK_RIGHT */
@@ -16,7 +16,8 @@ typedef enum PlatformKey
     KEY_R = 'R',
     KEY_S = 'S',
     KEY_T = 'T',
-} PlatformKey;
+};
+
 
 
 
