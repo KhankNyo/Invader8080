@@ -42,7 +42,7 @@ void Platform_FatalError(const char *ErrorMessage);
 void Platform_PrintError(const char *ErrorMessage);
 void Platform_Sleep(unsigned Millisec);
 
-PlatformCriticalSection Platform_CreateCriticalSection(void);
+PlatformCriticalSection *Platform_CreateCriticalSection(void);
 void Platform_EnterCriticalSection(PlatformCriticalSection *Crit);
 void Platform_LeaveCriticalSection(PlatformCriticalSection *Crit);
 void Platform_DestroyCriticalSection(PlatformCriticalSection *Crit);

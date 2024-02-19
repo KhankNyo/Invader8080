@@ -42,6 +42,14 @@ typedef struct PortHardware
             Player2;
 } PortHardware;
 
+typedef struct SoundSample 
+{
+    int16_t *Data;
+    uint32_t SampleCount;
+    uint32_t Index;
+    double TimeToStartPlaying;
+} SoundSample;
+
 
 
 
@@ -49,15 +57,27 @@ typedef struct PortHardware
 #define BLACK 0x00000000ul
 #define GREEN_MASK 0x0000FF00ul
 #define YELLOW_MASK 0x00FFFF00ul
+
 #define CLOCK_RATE 2000000ul
+#define FRAME_TIME_TARGET 1000.0 / 60.0
+#define CYCLES_PER_FRAME CLOCK_RATE / 60
 #define WAVE_FILE_DATA_OFFSET 44
+
+
+
 
 static PortHardware sHardware = { 0 };
 static Intel8080 sI8080 = { 0 };
+static uint32_t sCycles = 0;
 static uint8_t sRam[0x2400 - 0x2000];
 static uint8_t sVideoMemory[0x4000 - 0x2400];
 
 static Bool8 sHasSound;
+/* NOTE: SampleBufferCount will never be greater than 256 (highest record was 7) */
+static PLATFORM_ATOMIC uint8_t sSampleBufferCount;
+static SoundSample sSampleBuffer[256];
+static SoundSample sLoopingSample;
+static PlatformCriticalSection *sPushSoundCriticalSection;
 
 
 
@@ -112,79 +132,40 @@ static uint8_t PortReadByte(Intel8080 *i8080, uint16_t Port)
     return Byte;
 }
 
-static void MemoryCopy(void *Dst, const void *Src, size_t SizeBytes)
-{
-    uint8_t *DstPtr = Dst;
-    const uint8_t *SrcPtr = Src;
-    while (SizeBytes--)
-    {
-        *DstPtr++ = *SrcPtr++;
-    }
-}
-
 static void PushSound(const uint8_t *SoundDataBytes, size_t SoundDataSizeBytes)
 {
-#define MIN(a, b) a > b? b : a
-    int16_t *SoundBufferPtr = sSoundBuffer[sCurrentSoundBuffer];
-    const int16_t *SoundData = (const int16_t*)(SoundDataBytes + WAVE_FILE_DATA_OFFSET);
-    SoundDataSizeBytes -= WAVE_FILE_DATA_OFFSET;
-    if (sSoundBufferSizeBytes == 0)
-    {
-        MemoryCopy(sSoundBuffer[sCurrentSoundBuffer], SoundData, SoundDataSizeBytes);
-        sSoundBufferSizeBytes = SoundDataSizeBytes;
-    }
-    else
-    {
-        /* mix sounds together */
-        unsigned SoundSampleSize = sizeof *SoundData;
-        size_t MinSize = MIN(sSoundBufferSizeBytes, SoundDataSizeBytes);
-        for (unsigned i = 0; i < MinSize / SoundSampleSize; i++)
-        {
-            *SoundBufferPtr++ += *SoundData++;
-        }
+    SoundSample Sample = {
+        .Data = (int16_t *)(SoundDataBytes + 44),
+        .SampleCount = (SoundDataSizeBytes - 44) / 2,
+        .Index = 0,
+    };
 
-        /* copy the residue sound */
-        if (SoundDataSizeBytes > MinSize)
-        {
-            MemoryCopy(SoundBufferPtr, SoundData, SoundDataSizeBytes - MinSize);
-            sSoundBufferSizeBytes = SoundDataSizeBytes;
-        }
-    }
-#undef MIN
+    Platform_EnterCriticalSection(sPushSoundCriticalSection);
+        sSampleBuffer[sSampleBufferCount++] = Sample;
+    Platform_LeaveCriticalSection(sPushSoundCriticalSection);
 }
 
-/* submits sound buffer to the sound device, also adds the looping sound */
-static void SubmitSound(void)
+static void PushLoopingSound(const uint8_t *SoundDataBytes, size_t SoundDataSizeBytes)
 {
-    unsigned LoopingSizeBytes = (sLoopingSoundSizeBytes - WAVE_FILE_DATA_OFFSET);
-    const int16_t *LoopingSound = (const int16_t *)(sLoopingSound + WAVE_FILE_DATA_OFFSET);
-    static unsigned SampleIndex = 0;
-    if (NULL == sLoopingSound)
-        SampleIndex = 0;
+    SoundSample Sample = {
+        .Data = (int16_t *)(SoundDataBytes + 44),
+        .SampleCount = (SoundDataSizeBytes - 44) / 2,
+        .Index = 0,
+    };
 
-    if (sSoundBufferSizeBytes == 0)
-    {
-        if (sLoopingSound)
-        {
-            Platform_WriteToSoundDevice(LoopingSound, LoopingSizeBytes);
-        }
-    }
-    else
-    {
-        if (sLoopingSound)
-        {
-            int16_t *SoundBuffer = sSoundBuffer[sCurrentSoundBuffer];
-            for (unsigned i = 0; i < sSoundBufferSizeBytes / sizeof *SoundBuffer; i++)
-            {
-                *SoundBuffer++ += LoopingSound[SampleIndex++ % (LoopingSizeBytes/sizeof *LoopingSound)];
-            }
-        }
-        Platform_WriteToSoundDevice(sSoundBuffer[sCurrentSoundBuffer], sSoundBufferSizeBytes);
-        sCurrentSoundBuffer++;
-        sCurrentSoundBuffer %= STATIC_ARRAY_SIZE(sSoundBuffer);
-    }
-    sSoundBufferSizeBytes = 0;
+    Platform_EnterCriticalSection(sPushSoundCriticalSection);
+        sLoopingSample = Sample;
+    Platform_LeaveCriticalSection(sPushSoundCriticalSection);
 }
+
+static void PopLoopingSound(const uint8_t *SoundDataBytes, size_t SoundDataSizeBytes)
+{
+    (void)SoundDataBytes, (void)SoundDataSizeBytes;
+    Platform_EnterCriticalSection(sPushSoundCriticalSection);
+        sLoopingSample.Data = NULL;
+    Platform_LeaveCriticalSection(sPushSoundCriticalSection);
+}
+
 
 static void PortWriteByte(Intel8080 *i8080, uint16_t Port, uint8_t Byte)
 {
@@ -200,8 +181,7 @@ static void PortWriteByte(Intel8080 *i8080, uint16_t Port, uint8_t Byte)
         if (ON_RISING_EDGE(Byte, Last, 0))
         {
             /* UFO sound loops */
-            sLoopingSound = gUFOSound;
-            sLoopingSoundSizeBytes = gUFOSoundSize;
+            PushLoopingSound(gUFOSound, gUFOSoundSize);
         }
         if (ON_RISING_EDGE(Byte, Last, 1))
         {
@@ -218,8 +198,7 @@ static void PortWriteByte(Intel8080 *i8080, uint16_t Port, uint8_t Byte)
 
         if (ON_FALLING_EDGE(Byte, Last, 0))
         {
-            sLoopingSound = NULL;
-            sLoopingSoundSizeBytes = 0;
+            PopLoopingSound(gUFOSound, gUFOSoundSize);
         }
         Last = Byte;
     } break;
@@ -299,6 +278,43 @@ void Invader_OnKeyDown(PlatformKey Key)
     }
 }
 
+int16_t Invader_OnSoundThreadRequestingSample(double CurrentTime, double TimeStep)
+{
+    int32_t IntermediateSoundSample = 0;
+    Platform_EnterCriticalSection(sPushSoundCriticalSection);
+    {
+        for (int i = 0; i < (int)sSampleBufferCount; i++)
+        {
+            /* pop the sound sample that has been fully played */
+            if (sSampleBuffer[i].Index >= sSampleBuffer[i].SampleCount)
+            {
+                sSampleBuffer[i] = sSampleBuffer[--sSampleBufferCount];
+            }
+            else
+            {
+                IntermediateSoundSample += sSampleBuffer[i].Data[
+                    sSampleBuffer[i].Index++
+                ];
+            }
+        }
+        if (NULL != sLoopingSample.Data)
+        {
+            if (sLoopingSample.Index >= sLoopingSample.SampleCount)
+                sLoopingSample.Index = 0;
+            IntermediateSoundSample += sLoopingSample.Data[
+                sLoopingSample.Index++
+            ];
+        }
+    }
+    Platform_LeaveCriticalSection(sPushSoundCriticalSection);
+
+    if (IntermediateSoundSample > INT16_MAX)
+        return INT16_MAX;
+    else if (IntermediateSoundSample < INT16_MIN)
+        return INT16_MIN;
+    else return IntermediateSoundSample;
+}
+
 void Invader_Setup(PlatformAudioFormat *AudioFormat)
 {
     if (gSpaceInvadersRomSize != 0x2000)
@@ -318,41 +334,46 @@ void Invader_Setup(PlatformAudioFormat *AudioFormat)
     sHasSound = true;
     AudioFormat->ShouldHaveSound = true;
     AudioFormat->SampleRate = 44100;    /* the resources' sample rate */
-    AudioFormat->ChannelCount = 2;      /* TODO: are the wave files in the resources folder mono or stereo? */
-    AudioFormat->QueueSize = 8;         /* magic */
-    AudioFormat->BufferSizeBytes = 512; /* magic */
+    AudioFormat->ChannelCount = 2;      /* stereo */
+    AudioFormat->QueueSize = 48;         /* magic */
+    AudioFormat->BufferSizeBytes = 128 * AudioFormat->ChannelCount * sizeof(int16_t); /* magic */
+
+    sPushSoundCriticalSection = Platform_CreateCriticalSection();
 }
 
 void Invader_OnAudioInitializationFailed(const char *ErrorMessage)
 {
-    Platform_PrintError(ErrroMessage);
+    Platform_PrintError(ErrorMessage);
     sHasSound = false;
 }
 
 
+static void WaitTime(double ElapsedTime, double ExpectedTime)
+{
+    if (ElapsedTime < ExpectedTime)
+    {
+        double ResidueTime = ExpectedTime - ElapsedTime;
+        Platform_Sleep(ResidueTime);
+    }
+}
+
 void Invader_Loop(void)
 {
-    static unsigned Cycles = 0;
-    uint32_t FPSTarget = 60;
-    uint32_t CyclesPerFrames = CLOCK_RATE / FPSTarget;
-
-    Cycles++;
+    static double StartTime = 0;
+    sCycles++;
     I8080AdvanceClock(&sI8080);
 
-    if ((Cycles % (CyclesPerFrames / 5)) == 0 
-    && Platform_SoundDeviceIsReady())
-    {
-        SubmitSound();
-    }
 
     /* mid-frame interrupt */
-    if (Cycles == CyclesPerFrames / 2) 
+    if (sCycles == CYCLES_PER_FRAME / 2) 
     {
         I8080Interrupt(&sI8080, 1);
+        double ElapsedTime = Platform_GetTimeMillisec() - StartTime;
+        WaitTime(ElapsedTime, FRAME_TIME_TARGET / 2);
     }
 
     /* 1 frame finished */
-    if (Cycles == CyclesPerFrames)
+    if (sCycles == CYCLES_PER_FRAME)
     {
         PlatformBackBuffer BackBuffer = Platform_GetBackBuffer();
         uint32_t *Buffer = BackBuffer.Data;
@@ -377,20 +398,18 @@ void Invader_Loop(void)
 
         /* screen interrupt */
         I8080Interrupt(&sI8080, 2);
+        sCycles = 0;
 
-        static double sStartTime = 0;
-        double ElapsedTime = Platform_GetTimeMillisec() - sStartTime;
-        if (ElapsedTime < 1000.0 / FPSTarget)
-        {
-            Platform_Sleep(1000.0 / FPSTarget - ElapsedTime);
-        }
-        sStartTime = Platform_GetTimeMillisec();
-
-        Cycles = 0;
+        double ElapsedTime = Platform_GetTimeMillisec() - StartTime;
+        WaitTime(ElapsedTime, FRAME_TIME_TARGET);
+        StartTime = Platform_GetTimeMillisec();
     }
+
+
 }
 
 void Invader_AtExit(void)
 {
+    Platform_DestroyCriticalSection(sPushSoundCriticalSection);
 }
 
