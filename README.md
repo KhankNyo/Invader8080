@@ -13,8 +13,17 @@
 ```
 .\build.bat cl
 ```
-- clean build binaries (***NOTE***: *will also clean .h and .c files in the resources folder*):
+- clean build binaries:
 ```
 .\build.bat clean
 ```
 
+## Controls:
+- '1', '2': player 1 select, player 2 select, respectively
+- 'r': reset
+- 't': tilt
+- 'c': insert coin
+- 'a', 'd': player 1 move left, right respectively
+- space: player 1 shoots
+- left arrow, right arrow: player 2 move left, right respectively
+- enter: player 2 shoots
