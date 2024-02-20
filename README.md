@@ -19,11 +19,11 @@
 ```
 
 ## Controls:
-- '1', '2': player 1 select, player 2 select, respectively
+- '1', '2': player 1 select, player 2 select
 - 'r': reset
 - 't': tilt
 - 'c': insert coin
-- 'a', 'd': player 1 move left, right respectively
+- 'a', 'd': player 1 move left, right 
+- left arrow, right arrow: player 2 move left, right
 - space: player 1 shoots
-- left arrow, right arrow: player 2 move left, right respectively
 - enter: player 2 shoots
