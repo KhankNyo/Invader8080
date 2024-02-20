@@ -27,3 +27,8 @@
 - left arrow, right arrow: player 2 move left, right
 - space: player 1 shoots
 - enter: player 2 shoots
+
+## Issues and TODO's:
+- When the UFO appears on screen, its sound loop has a pulsing beat that should not be there.
+- Platform_CreateCriticalSection is currently very hacky.
+- SleepTime variable in Win32_SoundThreadRoutine should be tuned more carefully (sweet spot is probably around .1 to .3) so that the sound thread stays responsive when audio device needs more sample while not using 100% of a core
