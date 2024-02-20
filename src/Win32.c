@@ -3,15 +3,7 @@
 #include "Platform.h"
 
 
-
-
-#define METHOD_CALL(pObj, Meth) (pObj)->lpVtbl->Meth
-#define DESTRUCT(pObj) if (NULL != (pObj)) METHOD_CALL(pObj, Release)(pObj)
-#define WIN32_FN_DIRECT_SOUND_CREATE(name)\
-    HRESULT WINAPI name(LPGUID lpGuid, LPDIRECTSOUND* ppDS, LPUNKNOWN  pUnkOuter)
 #define SOUND_QUEUE_INITVAL 255
-
-
 
 typedef struct PlatformCriticalSection 
 {
@@ -41,6 +33,7 @@ static BITMAPINFO sWin32_BackBuffer_Bitmap = {
 static WAVEFORMATEX sWin32_AudioFormat;
 static HWAVEOUT sWin32_SoundDevice;
 static HANDLE sWin32_SoundThread_Handle = INVALID_HANDLE_VALUE;
+static Bool8 sWin32_NoSound = false;
 static PLATFORM_ATOMIC Bool8 saWin32_SoundThread_ShouldQuit;
 static PLATFORM_ATOMIC Bool8 saWin32_SoundDevice_IsReady;
 
@@ -142,7 +135,7 @@ static DWORD WINAPI Win32_SoundThreadRoutine(void *UserData)
     unsigned QueueIndex = 0;
     double CurrentTime = 0.0;
     double TimeStep = 1.0 / (double)Data->AudioFormat.SampleRate;
-    uint32_t SleepTime = .1 * 1000.0 
+    uint32_t SleepTime = .3 * 1000.0 
         /* bit shift instead of division by 2 to avoid warning, 
          * not bc it's faster (compiler optimizes anyway) */
         * ((double)((BufferSizeBytes >> 1) * QueueCapacity) * TimeStep);
@@ -322,11 +315,14 @@ AllocError:
 WaveOutError:
     saWin32_SoundDevice_IsReady = false;
     saWin32_SoundThread_ShouldQuit = true;
+    sWin32_NoSound = true;
     return ErrorMessage;
 }
 
 static void Win32_DestroyAudio(Win32_SoundThreadData *SoundThreadData)
 {
+    if (sWin32_NoSound)
+        return;
     /* signal the sound thread to stop */
     PLATFORM_ATOMIC_RMW(
         sWin32_SoundQueue_CriticalSection,
