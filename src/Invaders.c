@@ -335,8 +335,8 @@ void Invader_Setup(PlatformAudioFormat *AudioFormat)
     AudioFormat->ShouldHaveSound = true;
     AudioFormat->SampleRate = 44100;    /* the resources' sample rate */
     AudioFormat->ChannelCount = 2;      /* stereo */
-    AudioFormat->QueueSize = 48;         /* magic */
-    AudioFormat->BufferSizeBytes = 128 * AudioFormat->ChannelCount * sizeof(int16_t); /* magic */
+    AudioFormat->QueueSize = 8;         /* magic */
+    AudioFormat->BufferSizeBytes = 512 * AudioFormat->ChannelCount * sizeof(int16_t); /* magic */
 
     sPushSoundCriticalSection = Platform_CreateCriticalSection();
 }

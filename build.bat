@@ -15,9 +15,9 @@ if "%1"=="clean" (
     if not exist bin\ (
         mkdir bin
         pushd bin
-            %MSVC_CL% /FeResourceCompiler.exe ..\src\ResourecCompiler.c
-            ResourceCompiler.exe ..\resources\Resources.c ..\resources\Resources.h
+            %MSVC_CL% /FeResourceCompiler.exe ..\src\ResourceCompiler.c
         popd
+        bin\ResourceCompiler.exe .\resources\Resources.c .\resources\Resources.h
     )
 
     pushd bin

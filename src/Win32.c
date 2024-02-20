@@ -142,7 +142,7 @@ static DWORD WINAPI Win32_SoundThreadRoutine(void *UserData)
     unsigned QueueIndex = 0;
     double CurrentTime = 0.0;
     double TimeStep = 1.0 / (double)Data->AudioFormat.SampleRate;
-    uint32_t SleepTime = .2 * 1000.0 
+    uint32_t SleepTime = .1 * 1000.0 
         /* bit shift instead of division by 2 to avoid warning, 
          * not bc it's faster (compiler optimizes anyway) */
         * ((double)((BufferSizeBytes >> 1) * QueueCapacity) * TimeStep);
