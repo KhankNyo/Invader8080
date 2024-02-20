@@ -9,7 +9,7 @@
 ```
 .\build.bat
 ```
-- build with cl:
+- build with cl (msvc):
 ```
 .\build.bat cl
 ```
