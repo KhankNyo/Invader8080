@@ -47,7 +47,6 @@ typedef struct SoundSample
     int16_t *Data;
     uint32_t SampleCount;
     uint32_t Index;
-    double TimeToStartPlaying;
 } SoundSample;
 
 
@@ -61,7 +60,7 @@ typedef struct SoundSample
 #define CLOCK_RATE 2000000ul
 #define FRAME_TIME_TARGET 1000.0 / 60.0
 #define CYCLES_PER_FRAME CLOCK_RATE / 60
-#define WAVE_FILE_DATA_OFFSET 44
+#define WAVE_DATA_SECTION_OFFSET 44
 
 
 
@@ -135,8 +134,8 @@ static uint8_t PortReadByte(Intel8080 *i8080, uint16_t Port)
 static void PushSound(const uint8_t *SoundDataBytes, size_t SoundDataSizeBytes)
 {
     SoundSample Sample = {
-        .Data = (int16_t *)(SoundDataBytes + 44),
-        .SampleCount = (SoundDataSizeBytes - 44) / 2,
+        .Data = (int16_t *)(SoundDataBytes + WAVE_DATA_SECTION_OFFSET),
+        .SampleCount = (SoundDataSizeBytes - WAVE_DATA_SECTION_OFFSET) / 2,
         .Index = 0,
     };
 
@@ -148,8 +147,8 @@ static void PushSound(const uint8_t *SoundDataBytes, size_t SoundDataSizeBytes)
 static void PushLoopingSound(const uint8_t *SoundDataBytes, size_t SoundDataSizeBytes)
 {
     SoundSample Sample = {
-        .Data = (int16_t *)(SoundDataBytes + 44),
-        .SampleCount = (SoundDataSizeBytes - 44) / 2,
+        .Data = (int16_t *)(SoundDataBytes + WAVE_DATA_SECTION_OFFSET),
+        .SampleCount = (SoundDataSizeBytes - WAVE_DATA_SECTION_OFFSET) / 2,
         .Index = 0,
     };
 
@@ -334,7 +333,7 @@ void Invader_Setup(PlatformAudioFormat *AudioFormat)
     sHasSound = true;
     AudioFormat->ShouldHaveSound = true;
     AudioFormat->SampleRate = 44100;    /* the resources' sample rate */
-    AudioFormat->ChannelCount = 2;      /* stereo */
+    AudioFormat->ChannelCount = 1;      /* stereo */
     AudioFormat->QueueSize = 16;         /* magic */
     AudioFormat->BufferSizeBytes = 512 * AudioFormat->ChannelCount * sizeof(int16_t); /* magic */
 
